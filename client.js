@@ -2387,6 +2387,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
             h('circle', { cx: 8, cy: 11.4, r: 0.9, fill: 'currentColor' }))
 
       return h('section', { className: 'dsh-vigil-version-section' },
+        h('style', { key: 'dsh-vigil-version-style' }, CSS),
         h('div', { className: 'dsh-vigil-version-head' },
           h('h3', { className: 'dsh-vigil-version-heading' }, t('updateSectionTitle')),
           h('button', {
