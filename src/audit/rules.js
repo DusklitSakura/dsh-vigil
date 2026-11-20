@@ -81,7 +81,7 @@ const RULE_DEFS = [
   ['VG-INJ-06', 'dsh-attack', 'notice', 'cordis.patch.yml 无法静态解析'],
   ['VG-DSH-01', 'dsh-attack', 'review', '插件浏览器端代码具备网络外发能力'],
   ['VG-DSH-02', 'dsh-attack', 'review', '插件浏览器端代码访问本地存储/cookie'],
-  ['VG-DSH-03', 'dsh-attack', 'blocker', '插件浏览器端代码具备外传数据链路'],
+  ['VG-DSH-03', 'dsh-attack', 'review', '插件浏览器端同时出现存储访问与网络请求（疑似外传）'],
   ['VG-DSH-04', 'dsh-attack', 'review', '插件浏览器端代码直接操作 DOM/注入 iframe'],
   ['VG-DSH-05', 'dsh-attack', 'blocker', '插件声明以高权限模式运行'],
   ['VG-DSH-06', 'dsh-attack', 'blocker', 'bundle patch 指向包外路径'],
@@ -802,9 +802,16 @@ export function scanCodeFile(context) {
   const clientEgress = findings.find((finding) => finding.ruleId === 'VG-DSH-01');
   if (storageFinding && clientEgress) {
     add('VG-DSH-03', storageFinding.line, {
-      vars: { detail: `${storageFinding.vars?.detail ?? '存储访问'} + ${clientEgress.vars?.api ?? '网络请求'}` },
+      vars: {
+        detail: `${storageFinding.vars?.detail ?? '存储访问'} + ${clientEgress.vars?.api ?? '网络请求'}`,
+        storage: storageFinding.vars?.detail ?? '存储访问',
+        egress: clientEgress.vars?.api ?? '网络请求',
+      },
       confidence: 'heuristic',
-      extraMeans: escalationSentence('client-exfil', { detail: '存储读取 + 网络外发' }),
+      extraMeans: escalationSentence('client-exfil', {
+        storage: storageFinding.vars?.detail ?? '存储访问',
+        egress: clientEgress.vars?.api ?? '网络请求',
+      }),
     });
   } else {
     // sendBeacon is an explicit exfiltration primitive on its own.

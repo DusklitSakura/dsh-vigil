@@ -272,7 +272,7 @@ export function escalationSentence(kind, vars = {}) {
     case 'env-network':
       return `此外，同一文件存在网络外发能力（${vars.host || '目标不确定'}），读到的凭证可能被外发。`;
     case 'client-exfil':
-      return `同一文件还把该数据与网络请求组合使用（${vars.detail || '存储读取 + 外发'}），构成完整的外传链路。`;
+      return `此外，同一文件同时出现存储访问（${vars.storage || '本地存储/cookie'}）和网络请求（${vars.egress || '外发'}）；它们可能被组合成外传链路，但这只是静态共现，不代表数据实际流入请求，需要人工确认。`;
     default:
       return '';
   }

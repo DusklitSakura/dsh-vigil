@@ -286,11 +286,11 @@ test('bundle patch escaping the package is a blocker', async () => {
   assert.ok(lines[finding.line - 1].includes('../outside.yml'));
 });
 
-test('client half with storage access and network egress is a blocker', async () => {
+test('client storage access with network egress is a review-level co-occurrence heuristic', async () => {
   const report = await scanPluginDirectory(fixture('client-exfil'));
   const exfil = findingByRule(report, 'VG-DSH-03');
   assert.ok(exfil, 'expected VG-DSH-03');
-  assert.equal(exfil.severity, 'blocker');
+  assert.equal(exfil.severity, 'review', 'co-occurrence alone is not proof of a data flow');
   assert.equal(exfil.category, 'dsh-attack');
   assert.equal(exfil.file, 'lib/client.js');
   assert.equal(exfil.line, 1);
