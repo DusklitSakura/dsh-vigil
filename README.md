@@ -61,8 +61,9 @@ npm install --omit=dev
    git tag v0.0.2
    git push origin main --tags
    ```
-3. **更新**：打开 **Settings（设置）→ 守夜人** → 最下方 **「关于」** → **检查更新**；
-   发现新版本后点 **更新到 v0.0.2**（二次点击确认），Host 调用 DSH 插件管理器的 `updateBundle` 执行移除/安装与失败回滚，完成后按 DSH 提示刷新或重启。
+3. **更新**：打开 **Settings（设置）→ 守夜人** → 最下方 **「关于」** → **检查更新**，
+   或直接在该插件的 **Plugins 详情页底部「版本」区块**点 **重新检查**；
+   发现新版本后点 **更新到 vX.Y.Z**（二次点击确认），Host 调用 DSH 插件管理器的 `updateBundle` 执行移除/安装与失败回滚，完成后按 DSH 提示刷新或重启。
    检查动作只读取本仓库的 `origin` / bundle source 和 `ls-remote --tags`，不修改 profile。
 
 > 如果发布到 npm，则直接使用 Plugins 页原生的版本列表更新，不需要这里的更新卡片；本卡片只处理 GitHub 固定提交安装。
