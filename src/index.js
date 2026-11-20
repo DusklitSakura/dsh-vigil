@@ -671,9 +671,14 @@ export async function apply(ctx, config) {
   }
 
   // ---- 3b. authenticated browser routes: audit feed + approval answers ----
+  // On a cold boot the `connection` service can be provided after this
+  // plugin's apply, so register through ctx.inject instead of reading it once.
   try {
-    const connection = typeof ctx.get === 'function' ? ctx.get('connection') : undefined
-    if (connection && connection.fetch && typeof connection.fetch.register === 'function') {
+    const registerBrowserRoutes = connection => {
+      if (!connection || !connection.fetch || typeof connection.fetch.register !== 'function') {
+        logger.warn('[dsh-vigil] 当前宿主没有 connection.fetch，对话内审计与审批界面将不可用')
+        return undefined
+      }
       /**
        * Register one route with a retry window: a restarted entry can briefly
        * overlap the previous generation's exact path.
@@ -708,29 +713,42 @@ export async function apply(ctx, config) {
           }
         }
       }
-      disposers.push(registerRoute(createAuditFeedRoute({
-        getRuntime: () => runtime,
-        isDisabled,
-        limit: 40,
-        approval: approvalQueue,
-        installWatcher,
-      }), '审计数据路由'))
-      disposers.push(registerRoute(createAuditClearRoute({ getRuntime: () => runtime }), '审计清理路由'))
-      disposers.push(registerRoute(createSageActionRoute({
-        getRuntime: () => runtime,
-        rebuild: reason => rebuild(reason),
-      }), 'Sage 维护路由'))
-      disposers.push(registerRoute(createApprovalRoute({ getQueue: () => approvalQueue }), '对话内审批路由'))
-      disposers.push(registerRoute(createQuarantineRoute({ getQuarantine: () => runtime?.quarantine }), '隔离区路由'))
-      disposers.push(registerRoute(createInstallScanRoute({ getWatcher: () => installWatcher }), '手动插件扫描路由'))
-      disposers.push(registerRoute(createUpdateCheckRoute({
-        pluginDir: PLUGIN_DIR,
-        currentVersion: version,
-        getPluginManager: () => (typeof ctx.get === 'function' ? ctx.get('pluginManager') : undefined),
-        logger,
-      }), '插件更新检查路由'))
+      return [
+        registerRoute(createAuditFeedRoute({
+          getRuntime: () => runtime,
+          isDisabled,
+          limit: 40,
+          approval: approvalQueue,
+          installWatcher,
+        }), '审计数据路由'),
+        registerRoute(createAuditClearRoute({ getRuntime: () => runtime }), '审计清理路由'),
+        registerRoute(createSageActionRoute({
+          getRuntime: () => runtime,
+          rebuild: reason => rebuild(reason),
+        }), 'Sage 维护路由'),
+        registerRoute(createApprovalRoute({ getQueue: () => approvalQueue }), '对话内审批路由'),
+        registerRoute(createQuarantineRoute({ getQuarantine: () => runtime?.quarantine }), '隔离区路由'),
+        registerRoute(createInstallScanRoute({ getWatcher: () => installWatcher }), '手动插件扫描路由'),
+        registerRoute(createUpdateCheckRoute({
+          pluginDir: PLUGIN_DIR,
+          currentVersion: version,
+          getPluginManager: () => (typeof ctx.get === 'function' ? ctx.get('pluginManager') : undefined),
+          logger,
+        }), '插件更新检查路由'),
+      ]
+    }
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['connection'], child => {
+        try {
+          const stops = registerBrowserRoutes(typeof child.get === 'function' ? child.get('connection') : undefined)
+          if (stops) child.effect(() => () => { for (const stop of stops) stop() })
+        } catch (error) {
+          logger.warn(`[dsh-vigil] 无法注册浏览器数据路由：${String(error)}`)
+        }
+      })
     } else {
-      logger.warn('[dsh-vigil] 当前宿主没有 connection.fetch，对话内审计与审批界面将不可用')
+      const stops = registerBrowserRoutes(typeof ctx.get === 'function' ? ctx.get('connection') : undefined)
+      if (stops) disposers.push(...stops)
     }
   } catch (error) {
     logger.warn(`[dsh-vigil] 无法注册浏览器数据路由：${String(error)}`)
