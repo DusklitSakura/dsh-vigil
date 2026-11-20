@@ -292,6 +292,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       installLater: '稍后处理',
       installNoFindings: '无命中',
       installFindingsCount: '命中详情（{groups} 组 / {hits} 处）',
+      installFindingsPartial: '命中详情（{groups} 组 / 已显示 {shown} 处，共 {total} 处）',
       sevBlocker: '高危',
       sevReview: '可疑',
       sevNotice: '提示',
@@ -554,6 +555,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       installLater: 'Later',
       installNoFindings: 'No findings',
       installFindingsCount: 'Findings ({groups} rules / {hits} hits)',
+      installFindingsPartial: 'Findings ({groups} rules / showing {shown} of {total} hits)',
       sevBlocker: 'high risk',
       sevReview: 'suspicious',
       sevNotice: 'notice',
@@ -2009,9 +2011,17 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       }
       return h('div', { className: 'dsh-vigil-audit-findings' },
         h('div', { className: 'dsh-vigil-audit-findings-head' },
-          t('installFindingsCount')
-            .replace('{groups}', String(groups.length))
-            .replace('{hits}', String(findings.length))),
+          (() => {
+            const totalHits = Number(audit?.total) || findings.length
+            return totalHits > findings.length
+              ? t('installFindingsPartial')
+                .replace('{groups}', String(groups.length))
+                .replace('{shown}', String(findings.length))
+                .replace('{total}', String(totalHits))
+              : t('installFindingsCount')
+                .replace('{groups}', String(groups.length))
+                .replace('{hits}', String(findings.length))
+          })()),
         h('ul', { className: 'dsh-vigil-install-detail-list' }, groups.map(group => {
           const locations = group.locations
           const locationText = locations.length > 4

@@ -1,6 +1,6 @@
 {
   "name": "dsh-vigil",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Install-time risk audit, runtime deletion sentinel, local quarantine, optional Sage engine with auto-provision/update, live-saving settings, session-independent install audits, and a modal approval flow for dangerous operations in DeepSeek Harness",
   "private": true,
   "type": "module",

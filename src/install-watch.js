@@ -141,6 +141,8 @@ export function createInstallWatcher(options = {}) {
       notice: summary.notice,
       ruleIds: summary.ruleIds.slice(0, 12),
       top: summary.top,
+      total: summary.total,
+      truncated: summary.truncated === true,
       text: summary.text,
     }
     audits.push(auditEntry)
@@ -162,6 +164,8 @@ export function createInstallWatcher(options = {}) {
           review: summary.review,
           notices: summary.notice,
           findings: summary.top,
+          totalFindings: summary.total,
+          truncated: summary.truncated === true,
         },
       })
     } catch {

@@ -57,7 +57,15 @@ export function summarizeInstallScan(report, meta = {}) {
   const review = Number(summary.review) || 0
   const notice = Number(summary.notice) || 0
   const ruleIds = [...new Set(findings.map(finding => (typeof finding?.ruleId === 'string' ? finding.ruleId : null)).filter(Boolean))]
-  const top = findings.slice(0, 5).map(finding => {
+  // Keep a bounded sample for the audit panel but cover every severity, so a
+  // package with many blockers does not hide its review/notice findings.
+  const PER_SEVERITY_LIMIT = 5
+  const sampled = []
+  for (const severity of ['blocker', 'review', 'notice', 'info']) {
+    sampled.push(...findings.filter(finding => (finding?.severity ?? 'unknown') === severity).slice(0, PER_SEVERITY_LIMIT))
+  }
+  sampled.push(...findings.filter(finding => !['blocker', 'review', 'notice', 'info'].includes(finding?.severity)).slice(0, PER_SEVERITY_LIMIT))
+  const top = sampled.map(finding => {
     const ruleId = typeof finding?.ruleId === 'string' ? finding.ruleId : null
     return {
       ruleId,
@@ -84,6 +92,8 @@ export function summarizeInstallScan(report, meta = {}) {
     notice,
     ruleIds,
     top,
+    total: findings.length,
+    truncated: sampled.length < findings.length,
     reasons,
     text: `安装前静态审计：${blockers} 个高危，${review} 个可疑，${notice} 个提示`,
   }

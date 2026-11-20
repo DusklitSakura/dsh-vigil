@@ -1227,6 +1227,18 @@ test('install scan: local specs resolve to a scannable directory, registry specs
     assert.deepEqual(summary.ruleIds, ['VG-INJ-01', 'VG-EXF-02'])
     assert.equal(summary.top.length, 3)
     assert.match(summary.text, /1 个高危/)
+    const many = summarizeInstallScan({
+      summary: { blocker: 7, review: 2, notice: 0 },
+      findings: [
+        ...Array.from({ length: 7 }, (_, index) => ({ ruleId: 'VG-INJ-01', severity: 'blocker', file: `b${index}.js`, line: 1 })),
+        { ruleId: 'VG-EXF-02', severity: 'review', file: 'r1.js', line: 2 },
+        { ruleId: 'VG-EXF-02', severity: 'review', file: 'r2.js', line: 3 },
+      ],
+    }, { target: 'local-plugin', dir })
+    assert.equal(many.total, 9)
+    assert.equal(many.truncated, true)
+    assert.equal(many.top.filter(finding => finding.severity === 'blocker').length, 5)
+    assert.equal(many.top.filter(finding => finding.severity === 'review').length, 2, 'review findings must remain visible below the blocker sample')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
