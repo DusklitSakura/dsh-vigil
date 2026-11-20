@@ -291,8 +291,11 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       installDialogSummary: '检测到新的插件安装或更新，以下是静态审计结果。',
       installLater: '稍后处理',
       installNoFindings: '无命中',
-      installFindingsCount: '命中详情（{groups} 组 / {hits} 处）',
-      installFindingsPartial: '命中详情（{groups} 组 / 已显示 {shown} 处，共 {total} 处）',
+      installFindingsCount: '命中详情',
+      installPage: '第 {page} / {pages} 页 · 共 {total} 条',
+      installPageTruncated: '第 {page} / {pages} 页 · 共 {total} 条（仅列出前 {shown} 条）',
+      installPrev: '上一页',
+      installNext: '下一页',
       sevBlocker: '高危',
       sevReview: '可疑',
       sevNotice: '提示',
@@ -554,8 +557,11 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       installDialogSummary: 'A plugin was installed or updated; here is the static audit result.',
       installLater: 'Later',
       installNoFindings: 'No findings',
-      installFindingsCount: 'Findings ({groups} rules / {hits} hits)',
-      installFindingsPartial: 'Findings ({groups} rules / showing {shown} of {total} hits)',
+      installFindingsCount: 'Findings',
+      installPage: 'Page {page} of {pages} · {total} hits',
+      installPageTruncated: 'Page {page} of {pages} · {total} hits (showing first {shown})',
+      installPrev: 'Previous',
+      installNext: 'Next',
       sevBlocker: 'high risk',
       sevReview: 'suspicious',
       sevNotice: 'notice',
@@ -1989,59 +1995,99 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
         /* ------------------------------------------------------------------ *
      * install audit UI
      * ------------------------------------------------------------------ */
+    /** Page size of one severity tab in the install-audit detail panel. */
+    const INSTALL_PAGE_SIZE = 5
+
     function InstallAuditDetails(props) {
       const { audit, t } = props
       const findings = Array.isArray(audit?.top) ? audit.top : []
+      const [tab, setTab] = React.useState('blocker')
+      const [page, setPage] = React.useState(1)
       if (findings.length === 0) {
         return h('div', { className: 'dsh-vigil-dock-empty' }, t('installNoFindings'))
       }
-      /** @type {Array<{ key: string, ruleId: any, title: any, severity: any, locations: string[], first: any }>} */
-      const groups = []
-      const index = new Map()
+      const severityKey = finding => (
+        finding?.severity === 'review' ? 'review'
+          : finding?.severity === 'notice' ? 'notice'
+            : finding?.severity === 'info' ? 'info' : 'blocker'
+      )
+      const buckets = { blocker: [], review: [], notice: [], info: [] }
       for (const finding of findings) {
-        if (!finding) continue
-        const key = `${finding.ruleId ?? ''}|${finding.title ?? ''}|${finding.severity ?? ''}`
-        let group = index.get(key)
-        if (!group) {
-          group = { key, ruleId: finding.ruleId, title: finding.title, severity: finding.severity, locations: [], first: finding }
-          index.set(key, group)
-          groups.push(group)
-        }
-        if (finding.file) group.locations.push(`${finding.file}${finding.line ? `:${finding.line}` : ''}`)
+        if (finding) buckets[severityKey(finding)].push(finding)
       }
+      const totals = {
+        blocker: Number(audit?.blockers) || buckets.blocker.length,
+        review: Number(audit?.review) || buckets.review.length,
+        notice: Number(audit?.notice) || buckets.notice.length,
+        info: buckets.info.length,
+      }
+      const tabs = ['blocker', 'review', 'notice', 'info'].filter(key => buckets[key].length > 0)
+      if (tabs.length === 0) {
+        return h('div', { className: 'dsh-vigil-dock-empty' }, t('installNoFindings'))
+      }
+      const active = tabs.includes(tab) ? tab : tabs[0]
+      const items = buckets[active]
+      const pages = Math.max(1, Math.ceil(items.length / INSTALL_PAGE_SIZE))
+      const current = Math.min(Math.max(1, page), pages)
+      const start = (current - 1) * INSTALL_PAGE_SIZE
+      const visible = items.slice(start, start + INSTALL_PAGE_SIZE)
+      const total = totals[active] || items.length
       return h('div', { className: 'dsh-vigil-audit-findings' },
-        h('div', { className: 'dsh-vigil-audit-findings-head' },
-          (() => {
-            const totalHits = Number(audit?.total) || findings.length
-            return totalHits > findings.length
-              ? t('installFindingsPartial')
-                .replace('{groups}', String(groups.length))
-                .replace('{shown}', String(findings.length))
-                .replace('{total}', String(totalHits))
-              : t('installFindingsCount')
-                .replace('{groups}', String(groups.length))
-                .replace('{hits}', String(findings.length))
-          })()),
-        h('ul', { className: 'dsh-vigil-install-detail-list' }, groups.map(group => {
-          const locations = group.locations
-          const locationText = locations.length > 4
-            ? `${locations.slice(0, 4).join(' · ')} 等 ${locations.length} 处`
-            : locations.join(' · ')
-          return h('li', { key: group.key, className: 'dsh-vigil-install-detail-item' },
-            h('div', { className: 'dsh-vigil-install-detail-head' },
-              h('span', {
-                className: 'dsh-vigil-badge',
-                'data-kind': group.severity === 'blocker' ? 'deny' : group.severity === 'review' ? 'ask' : 'allow',
-              }, severityLabel(group.severity, t)),
-              h('span', { className: 'dsh-vigil-install-detail-title' }, group.title ?? group.ruleId ?? ''),
-              locationText ? h('span', { className: 'dsh-vigil-install-detail-loc' }, locationText) : null,
-            ),
-            group.first.evidence ? h('code', { className: 'dsh-vigil-install-evidence' }, group.first.evidence) : null,
-            group.first.means ? h('div', { className: 'dsh-vigil-install-means' }, group.first.means) : null,
-          )
-        })),
+        h('div', { className: 'dsh-vigil-audit-tabs', role: 'tablist' },
+          tabs.map(key => h('button', {
+            key,
+            type: 'button',
+            role: 'tab',
+            className: 'dsh-vigil-audit-tab',
+            'data-active': key === active ? 'true' : undefined,
+            'aria-selected': key === active ? 'true' : 'false',
+            onClick: () => {
+              setTab(key)
+              setPage(1)
+            },
+          }, `${severityLabel(key, t)} ${totals[key] || buckets[key].length}`))),
+        h('ul', { className: 'dsh-vigil-install-detail-list' }, visible.map((finding, index) => h('li', {
+          key: `${start + index}:${finding.ruleId ?? ''}:${finding.file ?? ''}:${finding.line ?? ''}`,
+          className: 'dsh-vigil-install-detail-item',
+        },
+        h('div', { className: 'dsh-vigil-install-detail-head' },
+          h('span', {
+            className: 'dsh-vigil-badge',
+            'data-kind': active === 'blocker' ? 'deny' : active === 'review' ? 'ask' : 'allow',
+          }, severityLabel(active, t)),
+          h('span', { className: 'dsh-vigil-install-detail-title' }, finding.title ?? finding.ruleId ?? ''),
+          finding.file
+            ? h('span', { className: 'dsh-vigil-install-detail-loc' }, `${finding.file}${finding.line ? `:${finding.line}` : ''}`)
+            : null),
+        finding.evidence ? h('code', { className: 'dsh-vigil-install-evidence' }, finding.evidence) : null,
+        finding.means ? h('div', { className: 'dsh-vigil-install-means' }, finding.means) : null,
+        ))),
+        h('div', { className: 'dsh-vigil-audit-pagination' },
+          h('span', null, total > items.length
+            ? t('installPageTruncated')
+              .replace('{page}', String(current))
+              .replace('{pages}', String(pages))
+              .replace('{total}', String(total))
+              .replace('{shown}', String(items.length))
+            : t('installPage')
+              .replace('{page}', String(current))
+              .replace('{pages}', String(pages))
+              .replace('{total}', String(total))),
+          h('button', {
+            type: 'button',
+            className: 'dsh-vigil-link',
+            disabled: current <= 1,
+            onClick: () => setPage(current - 1),
+          }, t('installPrev')),
+          h('button', {
+            type: 'button',
+            className: 'dsh-vigil-link',
+            disabled: current >= pages,
+            onClick: () => setPage(current + 1),
+          }, t('installNext'))),
       )
     }
+
 
     /** One install audit card with a 详情 toggle and an optional 重新扫描 button. */
     function InstallAuditRow(props) {
@@ -3165,6 +3211,12 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
 .dsh-vigil-audit-card-actions .dsh-vigil-button { height: 28px; font-size: 13px; }
 .dsh-vigil-audit-findings { display: flex; flex-direction: column; gap: 4px; }
 .dsh-vigil-audit-findings-head { font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
+.dsh-vigil-audit-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); margin-bottom: 4px; }
+.dsh-vigil-audit-tab { box-sizing: border-box; height: 30px; padding: 0 10px; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; }
+.dsh-vigil-audit-tab:hover { color: var(--dsw-alias-label-primary); }
+.dsh-vigil-audit-tab[data-active='true'] { color: var(--dsw-alias-label-primary); border-bottom-color: var(--dsw-alias-label-primary); font-weight: 500; }
+.dsh-vigil-audit-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
+.dsh-vigil-audit-pagination .dsh-vigil-link:disabled { opacity: 0.4; cursor: not-allowed; }
 .dsh-vigil-audit-card-expanded { padding: 0 16px 12px; }
 .dsh-vigil-install-manage-status { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); margin-left: auto; text-align: right; }
 .dsh-vigil-header-action { height: 28px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; cursor: pointer; }

@@ -1236,8 +1236,8 @@ test('install scan: local specs resolve to a scannable directory, registry specs
       ],
     }, { target: 'local-plugin', dir })
     assert.equal(many.total, 9)
-    assert.equal(many.truncated, true)
-    assert.equal(many.top.filter(finding => finding.severity === 'blocker').length, 5)
+    assert.equal(many.truncated, false)
+    assert.equal(many.top.filter(finding => finding.severity === 'blocker').length, 7)
     assert.equal(many.top.filter(finding => finding.severity === 'review').length, 2, 'review findings must remain visible below the blocker sample')
   } finally {
     rmSync(dir, { recursive: true, force: true })

@@ -59,7 +59,7 @@ export function summarizeInstallScan(report, meta = {}) {
   const ruleIds = [...new Set(findings.map(finding => (typeof finding?.ruleId === 'string' ? finding.ruleId : null)).filter(Boolean))]
   // Keep a bounded sample for the audit panel but cover every severity, so a
   // package with many blockers does not hide its review/notice findings.
-  const PER_SEVERITY_LIMIT = 5
+  const PER_SEVERITY_LIMIT = 50
   const sampled = []
   for (const severity of ['blocker', 'review', 'notice', 'info']) {
     sampled.push(...findings.filter(finding => (finding?.severity ?? 'unknown') === severity).slice(0, PER_SEVERITY_LIMIT))
