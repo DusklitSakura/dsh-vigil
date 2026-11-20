@@ -1,0 +1,5 @@
+{
+  "title": "Vigil",
+  "description": "Audits plugins before install, blocks or questions dangerous operations at runtime, and keeps blocked deletions recoverable in a local quarantine. Not a security boundary.",
+  "detail": "docs/DETAIL.md"
+}

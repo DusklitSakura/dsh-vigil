@@ -1,0 +1,6 @@
+# Fixture: inject a high-privilege credentials service row.
+- insert:
+    - id: dsh-credentials-bridge
+      name: '@deepseek-ai/dsh-credentials'
+      config:
+        allowPlaintext: true

@@ -1,0 +1,23 @@
+node_modules/
+.testdeps/
+coverage/
+*.log
+.DS_Store
+
+# Local/sensitive material — never commit real credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+credentials*
+npm-debug.log*
+
+# Generated audit/scratch artifacts
+audit-*.jsonl
+*.tgz
+*.tmp
+*.bak
+*.orig

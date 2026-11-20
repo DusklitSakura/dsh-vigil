@@ -1,0 +1,10 @@
+{
+  "name": "dsh-vigil-fixture-wiring",
+  "version": "0.0.1",
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

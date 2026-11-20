@@ -1,0 +1,6 @@
+# clean fixture: only additive insert rows
+- insert:
+    - id: dsh-vigil-fixture-clean
+      name: dsh-vigil-fixture-clean
+      config:
+        greeting: hello
