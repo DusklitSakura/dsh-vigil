@@ -249,6 +249,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       updateNoRemote: '尚未配置 GitHub 远程仓库（发布后可检查更新）',
       updateUnusableRemote: '远程仓库地址无法识别',
       updateLocalInstall: '当前为本地 link 安装，DSH 自动更新只适用于从 GitHub 固定提交或 npm 安装的版本',
+      updateGitUnpinned: '当前从 GitHub 分支安装（未固定提交），DSH 无法自动更新；请卸载后改用完整提交 sha 安装',
       updateRegistry: '当前为 npm 安装，请直接用插件页的版本列表更新',
       updateNetwork: '检查失败：无法访问远程仓库',
       updateFailed: '检查失败：{error}',
@@ -501,6 +502,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       updateNoRemote: 'No GitHub origin remote configured yet (publish the repository to enable updates)',
       updateUnusableRemote: 'The origin remote URL is not understood',
       updateLocalInstall: 'This is a local link install; DSH auto-update applies only to GitHub commit or npm installs',
+      updateGitUnpinned: 'Installed from a GitHub branch (not a pinned commit); DSH cannot auto-update it. Reinstall with the full commit sha.',
       updateRegistry: 'Installed from npm; use the version list on the Plugins page to update',
       updateNetwork: 'Check failed: the remote repository is unreachable',
       updateFailed: 'Check failed: {error}',
@@ -2350,6 +2352,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
           case 'unusable-remote': return t('updateUnusableRemote')
           case 'no-newer-tag': return t('updateLatest').replace('{version}', updateInfo.currentVersion ?? '')
           case 'local-install': return t('updateLocalInstall')
+          case 'git-unpinned': return t('updateGitUnpinned')
           case 'registry': return t('updateRegistry')
           case 'network': return t('updateNetwork')
           default: return t('updateFailed').replace('{error}', updateInfo.error ?? updateInfo.reason ?? '')

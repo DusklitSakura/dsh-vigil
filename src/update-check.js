@@ -213,13 +213,15 @@ export async function inspectUpdate(deps) {
     let updateKind = null
     /** @type {{ display: string, specBase: string } | null} */
     let sourceRemote = null
+    let sourceSpec = ''
     try {
       const manager = deps.getPluginManager?.()
       if (manager && typeof manager.listBundles === 'function') {
         const bundles = await manager.listBundles()
         const self = Array.isArray(bundles) ? bundles.find(bundle => bundle?.name === 'dsh-vigil') : null
         updateKind = typeof self?.update === 'string' ? self.update : null
-        sourceRemote = parseBundleSource(self?.source)
+        sourceSpec = typeof self?.source === 'string' ? self.source : ''
+        sourceRemote = parseBundleSource(sourceSpec)
       }
     } catch (error) {
       deps.logger?.warn?.(`[dsh-vigil] 更新检查读取插件信息失败：${String(error)}`)
@@ -255,8 +257,13 @@ export async function inspectUpdate(deps) {
 
     if (payload.reason === null) {
       if (payload.latestVersion === null) payload.reason = 'no-newer-tag'
-      else if (updateKind !== 'git') payload.reason = updateKind === 'registry' ? 'registry' : 'local-install'
-      else payload.canUpdate = true
+      else if (updateKind === 'git') payload.canUpdate = true
+      else if (updateKind === 'registry') payload.reason = 'registry'
+      else if (sourceRemote) {
+        // A Git source without a full commit pin cannot be replaced by
+        // updateBundle; distinguish it from a local link install.
+        payload.reason = /#[0-9a-f]{40}$/i.test(sourceSpec) ? 'local-install' : 'git-unpinned'
+      } else payload.reason = 'local-install'
     }
   } catch (error) {
     payload.ok = false
