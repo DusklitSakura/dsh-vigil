@@ -34,6 +34,7 @@ import { createApprovalQueue, createApprovalRoute } from './approval.js'
 import { createQuarantineRoute } from './quarantine-route.js'
 import { createInstallScanRoute } from './install-scan-route.js'
 import { createUpdateCheckRoute } from './update-check.js'
+import { createRulesUpdateRoute } from './rules/update.js'
 import { createInstallWatcher } from './install-watch.js'
 import { createInterceptor } from './sentinel/hook.js'
 import { createSelfGuard } from './sentinel/guard.js'
@@ -53,7 +54,7 @@ import { resolveConfig, killSwitchState } from './config.js'
 import { Config } from './config-schema.js'
 import { configFingerprint, snapshotConfig } from './live-config.js'
 import { registerTools } from './tools.js'
-import { reloadRulePack } from './rules/pack.js'
+import { getRulePack, reloadRulePack } from './rules/pack.js'
 import { isWithin, readJson, resolvePath, truncate } from './util.js'
 
 /** Loader-visible plugin name. */
@@ -274,6 +275,106 @@ export async function apply(ctx, config) {
   let sageUpdateState = { state: 'idle', latestVersion: null, checkedAt: null, error: null, updateAvailable: null, updatedTo: null }
   /** @type {Array<() => void>} */
   const disposers = []
+  /** Remote rule-pack update state, shared by the route, tool and settings page. */
+  let rulesUpdateState = {
+    state: 'idle',
+    currentVersion: null,
+    latestVersion: null,
+    checkedAt: null,
+    updatedAt: null,
+    error: null,
+    available: null,
+  }
+  /** @type {Promise<any>|null} */
+  let rulesUpdateRun = null
+  const rulesDirFor = cfg => (cfg.rules.dir ? resolvePath(cfg.rules.dir, cfg.paths.stateDir) : join(cfg.paths.stateDir, 'rules'))
+  const rulesLockFor = cfg => join(cfg.paths.stateDir, 'rules-lock.json')
+  const rulesVersionFor = cfg => join(cfg.paths.stateDir, 'rules-version.json')
+
+  /**
+   * Check (and optionally install) remote rule packs. Serialized: a double click
+   * on the settings button and the auto timer share one run.
+   * @param {{ update?: boolean }} [options]
+   */
+  async function runRulesUpdate(options = {}) {
+    const update = options.update === true
+    if (rulesUpdateRun) return rulesUpdateRun
+    const current = runtime?.config ?? config
+    const source = typeof current.rules?.source === 'string' ? current.rules.source.trim() : ''
+    if (source === '') return { ok: false, error: '未配置规则库更新源（rules.source）', state: rulesUpdateState }
+    rulesUpdateRun = (async () => {
+      rulesUpdateState = { ...rulesUpdateState, state: update ? 'updating' : 'checking', error: null }
+      try {
+        const check = await checkRulesUpdate({ source, versionFile: rulesVersionFor(current) })
+        if (!check.ok) {
+          rulesUpdateState = { ...rulesUpdateState, state: 'error', error: check.error ?? '规则库检查失败', checkedAt: new Date().toISOString() }
+          runtime?.audit?.record({ kind: 'event', event: 'rules-update', tool: 'vigil_rules', decision: 'none', ruleIds: ['VG-RULES-01'], reason: `规则库检查失败：${check.error ?? '未知原因'}` })
+          return { ok: false, error: check.error, state: rulesUpdateState }
+        }
+        if (!update || !check.available) {
+          rulesUpdateState = {
+            ...rulesUpdateState,
+            state: 'idle',
+            currentVersion: check.currentVersion,
+            latestVersion: check.latestVersion,
+            available: check.available,
+            checkedAt: new Date().toISOString(),
+          }
+          runtime?.audit?.record({
+            kind: 'event', event: 'rules-update', tool: 'vigil_rules', decision: 'none', ruleIds: ['VG-RULES-01'],
+            reason: `规则库检查：当前 ${check.currentVersion ?? '未知'}，最新 ${check.latestVersion}${check.available ? '（有更新）' : '（已是最新）'}`,
+          })
+          return { ok: true, ...check, state: rulesUpdateState }
+        }
+        const applied = await applyRulesUpdate({
+          source,
+          targetDir: rulesDirFor(current),
+          versionFile: rulesVersionFor(current),
+          lockPath: rulesLockFor(current),
+          logger,
+        })
+        if (!applied.ok) {
+          rulesUpdateState = { ...rulesUpdateState, state: 'error', error: applied.error ?? '规则库更新失败', checkedAt: new Date().toISOString() }
+          runtime?.audit?.record({ kind: 'event', event: 'rules-update', tool: 'vigil_rules', decision: 'none', ruleIds: ['VG-RULES-01'], reason: `规则库更新失败：${applied.error ?? '未知原因'}` })
+          return { ok: false, error: applied.error, state: rulesUpdateState }
+        }
+        if (runtime) runtime.rulePack = getRulePack()
+        rulesUpdateState = {
+          state: 'idle',
+          currentVersion: applied.version,
+          latestVersion: applied.version,
+          available: false,
+          checkedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          error: null,
+        }
+        runtime?.audit?.record({
+          kind: 'event', event: 'rules-update', tool: 'vigil_rules', decision: 'none', ruleIds: ['VG-RULES-01'],
+          reason: `规则库已更新到 ${applied.version}（${(applied.files ?? []).length} 个文件）`,
+        })
+        return { ok: true, ...applied, state: rulesUpdateState }
+      } catch (error) {
+        rulesUpdateState = { ...rulesUpdateState, state: 'error', error: error instanceof Error ? error.message : String(error) }
+        return { ok: false, error: rulesUpdateState.error, state: rulesUpdateState }
+      } finally {
+        rulesUpdateRun = null
+      }
+    })()
+    return rulesUpdateRun
+  }
+  /** Auto-update timer: only checks when enabled and a source is configured. */
+  const scheduleRulesAutoUpdate = () => {
+    const first = setTimeout(() => { void runRulesUpdate({ update: true }).catch(() => {}) }, 15000)
+    if (typeof first.unref === 'function') first.unref()
+    disposers.push(() => clearTimeout(first))
+    const timer = setInterval(() => {
+      const cfg = runtime?.config
+      if (cfg?.rules?.autoUpdate !== true || !cfg.rules.source) return
+      void runRulesUpdate({ update: true }).catch(() => {})
+    }, 5 * 60 * 1000)
+    if (typeof timer.unref === 'function') timer.unref()
+    disposers.push(() => clearInterval(timer))
+  }
   /** Authenticated browser routes and whether each one registered. */
   const ROUTE_LABELS = [
     '审计数据路由',
@@ -283,6 +384,7 @@ export async function apply(ctx, config) {
     '隔离区路由',
     '手动插件扫描路由',
     '插件更新检查路由',
+    '规则库更新路由',
   ]
   /** @type {Map<string, string>} */
   const routeStatus = new Map(ROUTE_LABELS.map(label => [label, 'pending']))
@@ -705,6 +807,8 @@ export async function apply(ctx, config) {
         getApproval: () => approvalQueue,
         getCwd: () => runtime.baseCwd,
         getRoutes: () => Object.fromEntries(routeStatus),
+        runRulesUpdate,
+        getRulesUpdateState: () => rulesUpdateState,
       }))
     } catch (error) {
       logger.warn(`[dsh-vigil] 无法注册 vigil_* 工具：${String(error)}`)
@@ -773,7 +877,12 @@ export async function apply(ctx, config) {
         registerRoute(createApprovalRoute({ getQueue: () => approvalQueue }), '对话内审批路由'),
         registerRoute(createQuarantineRoute({ getQuarantine: () => runtime?.quarantine }), '隔离区路由'),
         registerRoute(createInstallScanRoute({ getWatcher: () => installWatcher }), '手动插件扫描路由'),
-        registerRoute(createUpdateCheckRoute({
+        registerRoute(createRulesUpdateRoute({
+        getState: () => rulesUpdateState,
+        run: runRulesUpdate,
+        logger,
+      }), '规则库更新路由'),
+      registerRoute(createUpdateCheckRoute({
           pluginDir: PLUGIN_DIR,
           currentVersion: version,
           getPluginManager: () => (typeof ctx.get === 'function' ? ctx.get('pluginManager') : undefined),
@@ -803,6 +912,13 @@ export async function apply(ctx, config) {
     installWatcher.start()
   } catch (error) {
     logger.warn(`[dsh-vigil] 安装审计监听启动失败：${String(error)}`)
+  }
+  // Remote rule-pack updates are optional; the timer re-reads the live config,
+  // so enabling them on the settings page takes effect without a reload.
+  try {
+    scheduleRulesAutoUpdate()
+  } catch (error) {
+    logger.warn(`[dsh-vigil] 规则库自动更新启动失败：${String(error)}`)
   }
 
   // ---- 4. settings integration -----------------------------------------

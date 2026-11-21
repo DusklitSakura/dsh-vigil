@@ -48,6 +48,7 @@ const SAGE_ACTION_PATH = '/api/dsh-vigil/sage-action'
     const APPROVAL_PATH = '/api/dsh-vigil/approval'
 const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
 const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
+const RULES_UPDATE_PATH = '/api/dsh-vigil/rules-update'
     /** Poll cadence for the drawer (only while the page is visible). */
     const FEED_INTERVAL_MS = 2500
 
@@ -108,6 +109,29 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
       hintEnforce: '开启时真正阻止危险调用；关闭时只在审计日志里标记“本应拦截”',
       statusLoading: '正在读取运行状态…',
       statusMode: '模式：{mode}',
+      statusBoardTitle: '守夜人状态监控',
+      statusRefresh: '刷新',
+      statusCellMode: '模式',
+      statusCellDecisions: '最近决策',
+      statusCellQuarantine: '隔离区',
+      statusCellAudit: '审计记录',
+      statusCellSage: 'Sage',
+      statusCellRules: '规则包',
+      rulesSection: '规则包与更新',
+      labelRulesSource: '规则库更新源',
+      hintRulesSource: '清单 URL（HTTPS JSON，格式见 README「规则包」）；留空表示只用本地目录',
+      labelRulesAutoUpdate: '自动更新规则库',
+      hintRulesAutoUpdate: '开启后按间隔检测清单并安装新版本；下载/校验失败会保留旧规则并告警',
+      labelRulesInterval: '检测间隔',
+      rulesCheck: '检测规则库更新',
+      rulesChecking: '正在检测…',
+      rulesUpdateNow: '立即更新',
+      rulesUpdating: '正在更新…',
+      rulesUpdateDone: '规则库已更新到 {version}',
+      rulesUpdateAvailable: '发现新规则库：{latest}',
+      rulesUpdateNone: '规则库已是最新（{version}）',
+      rulesUpdateFailed: '规则库更新失败',
+      rulesCurrentVersion: '当前规则库：{version}',
       statusEnforceMode: '拦截',
       statusMonitorMode: '仅记录（monitor）',
       statusCounts: '最近决策 放行 {allow} · 询问 {ask} · 拦截 {deny}',
@@ -400,6 +424,29 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
       hintEnforce: 'On blocks dangerous calls; off only records wouldBe in the audit log',
       statusLoading: 'Reading runtime status…',
       statusMode: 'Mode: {mode}',
+      statusBoardTitle: 'Watcher status',
+      statusRefresh: 'Refresh',
+      statusCellMode: 'Mode',
+      statusCellDecisions: 'Recent decisions',
+      statusCellQuarantine: 'Quarantine',
+      statusCellAudit: 'Audit records',
+      statusCellSage: 'Sage',
+      statusCellRules: 'Rule packs',
+      rulesSection: 'Rule packs & updates',
+      labelRulesSource: 'Rule-pack manifest URL',
+      hintRulesSource: 'HTTPS JSON manifest (see the README rule-pack section); empty means local files only',
+      labelRulesAutoUpdate: 'Auto-update rule packs',
+      hintRulesAutoUpdate: 'Check the manifest on an interval and install newer packs; a failed download/validation keeps the previous rules and warns',
+      labelRulesInterval: 'Check interval',
+      rulesCheck: 'Check rule packs',
+      rulesChecking: 'Checking…',
+      rulesUpdateNow: 'Update now',
+      rulesUpdating: 'Updating…',
+      rulesUpdateDone: 'Rule packs updated to {version}',
+      rulesUpdateAvailable: 'New rule pack available: {latest}',
+      rulesUpdateNone: 'Rule packs are up to date ({version})',
+      rulesUpdateFailed: 'Rule-pack update failed',
+      rulesCurrentVersion: 'Current rule pack: {version}',
       statusEnforceMode: 'enforce',
       statusMonitorMode: 'monitor (record only)',
       statusCounts: 'Recent: {allow} allowed · {ask} asked · {deny} blocked',
@@ -718,6 +765,15 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
         ],
       },
       {
+        titleKey: 'rulesSection',
+        fields: [
+          { path: 'rules.dir', type: 'text', labelKey: 'labelRulesDir', hintKey: 'hintRulesDir' },
+          { path: 'rules.source', type: 'text', labelKey: 'labelRulesSource', hintKey: 'hintRulesSource' },
+          { path: 'rules.autoUpdate', type: 'switch', labelKey: 'labelRulesAutoUpdate', hintKey: 'hintRulesAutoUpdate' },
+          { path: 'rules.updateIntervalMs', type: 'number', labelKey: 'labelRulesInterval', min: 60000, step: 60000, unitKey: 'unitMs' },
+        ],
+      },
+      {
         titleKey: 'auditSection',
         fields: [
           { path: 'auditLog.enabled', type: 'switch', labelKey: 'labelAuditEnabled' },
@@ -757,7 +813,6 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
           { path: 'selfProtection', type: 'select', labelKey: 'labelSelfProtection', hintKey: 'hintSelfProtection', options: [{ value: 'deny', labelKey: 'optDeny' }, { value: 'ask', labelKey: 'optAsk' }] },
           { path: 'allowSelfUninstall', type: 'switch', labelKey: 'labelAllowSelfUninstall', hintKey: 'hintAllowSelfUninstall' },
           { path: 'tools.enabled', type: 'switch', labelKey: 'labelTools', hintKey: 'hintTools' },
-          { path: 'rules.dir', type: 'text', labelKey: 'labelRulesDir', hintKey: 'hintRulesDir' },
           { path: 'killSwitch.enabled', type: 'switch', labelKey: 'labelKillSwitch', hintKey: 'hintKillSwitch' },
         ],
       },
@@ -2609,32 +2664,89 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
       const [updateBusy, setUpdateBusy] = React.useState(false)
       const [updateConfirm, setUpdateConfirm] = React.useState(false)
       const [updateMessage, setUpdateMessage] = React.useState(null)
+      const [rulesBusy, setRulesBusy] = React.useState(false)
+      const [rulesInfo, setRulesInfo] = React.useState(null)
+      const [rulesMessage, setRulesMessage] = React.useState(null)
       const feedState = useFeed()
 
-      const statusLine = React.useMemo(() => {
+      const statusBoard = React.useMemo(() => {
         const data = feedState.data
-        if (!data) return t('statusLoading')
+        if (!data) {
+          return { cells: [{ label: t('statusBoardTitle'), value: t('statusLoading') }], foot: '' }
+        }
         const counts = data.counts ?? {}
         const quarantine = data.quarantine ?? {}
         const mode = data.mode === 'monitor' ? t('statusMonitorMode') : t('statusEnforceMode')
-        const parts = [
-          t('statusMode').replace('{mode}', mode),
-          t('statusCounts')
-            .replace('{allow}', String(counts.allow ?? 0))
-            .replace('{ask}', String(counts.ask ?? 0))
-            .replace('{deny}', String(counts.deny ?? 0)),
-          t('statusQuarantine')
-            .replace('{count}', String(quarantine.count ?? 0))
-            .replace('{size}', formatBytes(quarantine.bytes ?? 0)),
-          t('statusAudit').replace('{count}', String(data.audit?.count ?? 0)),
-          t('statusSage')
-            .replace('{state}', String(data.sage?.state ?? '?'))
-            .replace('{rules}', String(data.sage?.rules ?? 0)),
-          t('statusRules').replace('{count}', String(data.rules?.sources ?? 0)),
-          typeof data.integrity?.describe === 'string' && data.integrity.describe !== '' ? data.integrity.describe : null,
-        ].filter(Boolean)
-        return parts.join(' · ')
+        const cells = [
+          { label: t('statusCellMode'), value: mode, tone: data.mode === 'monitor' ? 'warn' : 'ok' },
+          {
+            label: t('statusCellDecisions'),
+            value: t('statusCounts')
+              .replace('{allow}', String(counts.allow ?? 0))
+              .replace('{ask}', String(counts.ask ?? 0))
+              .replace('{deny}', String(counts.deny ?? 0)),
+          },
+          {
+            label: t('statusCellQuarantine'),
+            value: t('statusQuarantine')
+              .replace('{count}', String(quarantine.count ?? 0))
+              .replace('{size}', formatBytes(quarantine.bytes ?? 0)),
+            tone: (quarantine.count ?? 0) > 0 ? 'warn' : undefined,
+          },
+          { label: t('statusCellAudit'), value: String(data.audit?.count ?? 0) },
+          {
+            label: t('statusCellSage'),
+            value: t('statusSage')
+              .replace('{state}', String(data.sage?.state ?? '?'))
+              .replace('{rules}', String(data.sage?.rules ?? 0)),
+            tone: data.sage?.state === 'ready' ? 'ok' : 'warn',
+          },
+          { label: t('statusCellRules'), value: t('statusRules').replace('{count}', String(data.rules?.sources ?? 0)) },
+        ]
+        return {
+          cells,
+          foot: typeof data.integrity?.describe === 'string' && data.integrity.describe !== '' ? data.integrity.describe : '',
+        }
       }, [feedState.data, t])
+
+      const runRulesAction = React.useCallback(async action => {
+        setRulesBusy(true)
+        setRulesMessage(null)
+        try {
+          const response = await fetch(RULES_UPDATE_PATH, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || !payload?.ok) throw new Error(payload?.error ?? `HTTP ${response.status}`)
+          setRulesInfo(payload)
+          setRulesMessage(action === 'update'
+            ? t('rulesUpdateDone').replace('{version}', String(payload.version ?? '?'))
+            : payload.available
+              ? t('rulesUpdateAvailable').replace('{latest}', String(payload.latestVersion ?? '?'))
+              : t('rulesUpdateNone').replace('{version}', String(payload.latestVersion ?? '?')))
+        } catch (error) {
+          setRulesMessage(`${t('rulesUpdateFailed')}：${error instanceof Error ? error.message : String(error)}`)
+        } finally {
+          setRulesBusy(false)
+        }
+      }, [t])
+
+      React.useEffect(() => {
+        let cancelled = false
+        void (async () => {
+          try {
+            const response = await fetch(RULES_UPDATE_PATH, { credentials: 'same-origin' })
+            const payload = await response.json().catch(() => null)
+            if (!cancelled && response.ok && payload?.state) setRulesInfo({ state: payload.state })
+          } catch {
+            // status is optional; the buttons report their own errors
+          }
+        })()
+        return () => { cancelled = true }
+      }, [])
 
       const checkUpdate = React.useCallback(async () => {
         setUpdateState('checking')
@@ -3023,7 +3135,22 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
         h('style', { key: 'dsh-vigil-css' }, CSS),
         h('h2', { className: 'dsh-vigil-heading' }, t('title')),
         h('p', { className: 'dsh-vigil-intro' }, t('intro')),
-        h('p', { className: 'dsh-vigil-statusline', role: 'status' }, statusLine),
+        h('section', { className: 'dsh-vigil-board', role: 'status', 'aria-label': t('statusBoardTitle') },
+          h('div', { className: 'dsh-vigil-board-head' },
+            h('span', { className: 'dsh-vigil-board-title' }, t('statusBoardTitle')),
+            h('button', {
+              type: 'button',
+              className: 'dsh-vigil-button dsh-vigil-board-refresh',
+              onClick: () => { void refreshFeed() },
+            }, t('statusRefresh'))),
+          h('div', { className: 'dsh-vigil-board-grid' },
+            statusBoard.cells.map(cell => h('div', {
+              key: cell.label,
+              className: `dsh-vigil-board-cell${cell.tone ? ` dsh-vigil-board-${cell.tone}` : ''}`,
+            },
+            h('span', { className: 'dsh-vigil-board-label' }, cell.label),
+            h('span', { className: 'dsh-vigil-board-value' }, cell.value)))),
+          statusBoard.foot ? h('p', { className: 'dsh-vigil-board-foot' }, statusBoard.foot) : null),
         h('div', { className: 'dsh-vigil-topbar' },
           h('div', { className: 'dsh-vigil-topbar-row' },
             h('span', { className: 'dsh-vigil-topbar-label' }, t('labelLocale')),
@@ -3061,7 +3188,7 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
           const bodyDisabled = monitorDisabled || (masterOff && group.titleKey !== 'modeSection')
           const detailFields = (master ? group.fields.filter(field => field !== master) : group.fields)
             .filter(field => field.path !== 'locale')
-          const hasActions = group.titleKey === 'auditSection' || group.titleKey === 'sageSection' || group.titleKey === 'quarantineSection'
+          const hasActions = group.titleKey === 'auditSection' || group.titleKey === 'sageSection' || group.titleKey === 'quarantineSection' || group.titleKey === 'rulesSection'
           const expandable = detailFields.length > 0 || hasActions
           const masterNode = master
             ? h('span', {
@@ -3133,6 +3260,28 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
                     onClick: runSageUninstall,
                   }, sageBusy ? t('sageUninstalling') : sageConfirm ? t('sageUninstallConfirm') : t('sageUninstall')),
                   sageMessage ? h('span', { className: 'dsh-vigil-meta', role: 'status' }, sageMessage) : null,
+                )
+                : null,
+              group.titleKey === 'rulesSection'
+                ? h('div', { className: 'dsh-vigil-audit-clear-row' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-vigil-button',
+                    disabled: rulesBusy,
+                    onClick: () => { void runRulesAction('check') },
+                  }, rulesBusy ? t('rulesChecking') : t('rulesCheck')),
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-vigil-button',
+                    disabled: rulesBusy || getPath(draft, 'rules.source') === '',
+                    onClick: () => { void runRulesAction('update') },
+                  }, rulesBusy ? t('rulesUpdating') : t('rulesUpdateNow')),
+                  rulesMessage
+                    ? h('span', { className: 'dsh-vigil-meta', role: 'status' }, rulesMessage)
+                    : rulesInfo?.state
+                      ? h('span', { className: 'dsh-vigil-meta' },
+                        t('rulesCurrentVersion').replace('{version}', String(rulesInfo.state.currentVersion ?? rulesInfo.state.latestVersion ?? '—')))
+                      : null,
                 )
                 : null,
             )
@@ -3236,6 +3385,17 @@ const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
 .dsh-vigil-heading { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; }
 .dsh-vigil-intro { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
 .dsh-vigil-statusline { margin: 8px 0 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); }
+.dsh-vigil-board { margin: 4px 0 16px; padding: 14px 16px; border: 1px solid var(--dsw-alias-border-secondary, rgba(128, 128, 128, 0.25)); border-radius: 12px; background: var(--dsw-alias-bg-secondary, rgba(128, 128, 128, 0.06)); }
+.dsh-vigil-board-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.dsh-vigil-board-title { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+.dsh-vigil-board-refresh { flex: none; }
+.dsh-vigil-board-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }
+.dsh-vigil-board-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px; border-radius: 8px; background: var(--dsw-alias-bg-primary, rgba(255, 255, 255, 0.5)); }
+.dsh-vigil-board-label { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
+.dsh-vigil-board-value { font-size: 13px; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-vigil-board-ok .dsh-vigil-board-value { color: var(--dsw-alias-label-success, #1a7f37); }
+.dsh-vigil-board-warn .dsh-vigil-board-value { color: var(--dsw-alias-label-warning, #9a6700); }
+.dsh-vigil-board-foot { margin: 10px 0 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); }
 .dsh-vigil-update-card { box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2)); }
 .dsh-vigil-update-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .dsh-vigil-update-title { font-size: 13px; line-height: 19px; font-weight: 500; color: var(--dsw-alias-label-primary); }

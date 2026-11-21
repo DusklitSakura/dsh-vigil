@@ -165,6 +165,9 @@ function buildSchema(schema) {
     scan: scan(),
     rules: schema.object({
       dir: text('').volatile().description('外部规则包目录（YAML）；留空使用 <DSH_HOME>/vigil/rules'),
+      source: text('').volatile().description('规则库更新清单 URL（HTTPS JSON）'),
+      autoUpdate: flag(false).volatile().description('按间隔自动检测并安装规则库更新'),
+      updateIntervalMs: count(21600000).volatile().description('自动更新检测间隔（毫秒）'),
     }),
     selfProtection: text('deny').volatile().description('删除、写入/编辑、卸载/停用/替换插件自身或状态目录时的决策：deny 或 ask'),
     notify: schema.object({

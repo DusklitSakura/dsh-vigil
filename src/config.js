@@ -170,6 +170,15 @@ export const DEFAULT_CONFIG = Object.freeze({
    */
   rules: {
     dir: '',
+    /**
+     * Optional HTTPS manifest for remote rule-pack updates:
+     * `{ "version": "...", "files": { "sentinel.yaml": "https://…" } }`.
+     * `autoUpdate` checks the manifest on an interval; the settings page and
+     * `vigil_rules` also allow a manual check/update.
+     */
+    source: '',
+    autoUpdate: false,
+    updateIntervalMs: 21600000,
   },
   /** Decision for calls that would delete/move the plugin or its state. */
   selfProtection: 'deny',
@@ -366,6 +375,7 @@ function validateIntegers(config, warnings) {
     [config.auditLog, 'maxFiles', 1, DEFAULT_CONFIG.auditLog.maxFiles],
     [config.auditLog, 'argumentChars', 16, DEFAULT_CONFIG.auditLog.argumentChars],
     [config.auditLog.anchor, 'everyN', 1, DEFAULT_CONFIG.auditLog.anchor.everyN],
+    [config.rules, 'updateIntervalMs', 60000, DEFAULT_CONFIG.rules.updateIntervalMs],
     [config.notify, 'approvalTimeoutMs', 5000, DEFAULT_CONFIG.notify.approvalTimeoutMs],
     [config.sage, 'timeoutMs', 10, DEFAULT_CONFIG.sage.timeoutMs],
   ]
@@ -390,6 +400,7 @@ function validateIntegers(config, warnings) {
     [config.notify.inlineApproval, 'notify.inlineApproval'],
     [config.auditLog.anchor.enabled, 'auditLog.anchor.enabled'],
     [config.scan.ast.enabled, 'scan.ast.enabled'],
+    [config.rules.autoUpdate, 'rules.autoUpdate'],
   ]) {
     if (typeof value !== 'boolean') warnings.push(`${label} 必须是布尔值；已按 truthy 处理`)
   }
@@ -411,6 +422,12 @@ function validateStringArrays(config, warnings) {
   if (!config.rules || typeof config.rules !== 'object') {
     warnings.push('rules 必须是对象；已重置为默认值')
     config.rules = { dir: '' }
+  }
+  if (typeof config.rules.source !== 'string') {
+    warnings.push('rules.source 必须是字符串；已回退为空')
+    config.rules.source = ''
+  } else {
+    config.rules.source = config.rules.source.trim()
   }
   if (typeof config.rules.dir !== 'string') {
     warnings.push('rules.dir 必须是字符串；已重置为空')

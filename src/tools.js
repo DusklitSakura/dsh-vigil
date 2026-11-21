@@ -283,12 +283,13 @@ export function registerTools(ctx, deps) {
       'Inspect, verify or pin the external YAML rule pack (the operator directory, default <DSH_HOME>/vigil/rules).',
       'status lists which pack files are loaded and their hashes; verify compares them with the hash lock; pin trusts the current files by writing the lock used on the next load.',
       'Pinned files that change afterwards are rejected on load (fail-safe), so a tampered external pack cannot silently weaken detection.',
+      'check fetches the configured rules.source manifest and reports whether a newer pack exists; update downloads, validates and installs it (same path as the settings page auto-update).',
     ].join(' '),
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        action: { type: 'string', enum: ['status', 'verify', 'pin'], description: 'Operation to perform.' },
+        action: { type: 'string', enum: ['status', 'verify', 'pin', 'check', 'update'], description: 'Operation to perform.' },
       },
       required: ['action'],
     },
@@ -306,6 +307,29 @@ export function registerTools(ctx, deps) {
       const describeFiles = info => (info.names.length === 0
         ? '（无 .yaml 文件）'
         : info.names.map(name => `  · ${name}  sha256:${(info.files[name] ?? '').slice(0, 16)}…`).join('\n'))
+
+      if (action === 'check' || action === 'update') {
+        const run = deps.runRulesUpdate
+        if (typeof run !== 'function') return { ok: false, action, card: '规则库更新不可用（未挂载更新器）' }
+        const result = await run({ update: action === 'update' })
+        const source = typeof current.config.rules?.source === 'string' ? current.config.rules.source : ''
+        const state = /** @type {any} */ (result).state ?? {}
+        const card = result.ok === false
+          ? `规则库${action === 'update' ? '更新' : '检查'}失败：${result.error ?? '未知原因'}`
+          : action === 'update'
+            ? `规则库已更新到 ${result.version ?? '?'}（${(result.files ?? []).length} 个文件）`
+            : result.available
+              ? `发现新规则库：当前 ${result.currentVersion ?? '未安装'}，最新 ${result.latestVersion}`
+              : `规则库已是最新（${result.latestVersion ?? '未知版本'}）`
+        return {
+          ok: result.ok !== false,
+          action,
+          source,
+          ...result,
+          state,
+          card,
+        }
+      }
 
       if (action === 'status') {
         const info = describePackDir(externalDir)

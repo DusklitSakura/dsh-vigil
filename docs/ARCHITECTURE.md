@@ -51,6 +51,7 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 | `sentinel/guard.js` | 自保护：删除/移动插件目录或状态目录、工具卸载/替换自身 | 默认 `deny`（单调 guard）；`selfProtection:'ask'` 时交给决策流水线询问 |
 | `sentinel/sage.js` / `sage-load.js` | Sage 适配器：预热、串行化、超时、失败降级；安装后加载校验 | 只评估执行/网络面（Bash/WebFetch/Read/Delete）；可选引擎失败降级内置规则 |
 | `delete/*` | 删除意图解析（POSIX/PowerShell）、保护根分级、规模估算、隔离区存储 | 隔离区只接收 `deny` + 低/中风险的字面目标；通配/不可解析目标不移动 |
+| `rules/update.js` | 远程规则库更新：HTTPS 清单、下载、逐文件 YAML 校验、原子写入、失败回滚、规则锁/版本文件 | 仅 HTTPS（回环 http 仅测试）；大小/文件数上限；校验失败必须回滚并保留旧规则 |
 | `audit/*` | 安装前静态审计：lexer、规则目录、narrative、扫描器、安装目标解析、AST 别名分析 | **绝不 import/执行被扫描代码**；报告只含文件/行/证据；`audit/ast.js` 的 acorn 解析失败或缺失时回退纯正则 |
 | `install-watch.js` | profile 依赖差分：新增＝install，版本/范围变化＝update；手动 `rescan()` | 首次运行只建立基线，不重报已装插件 |
 | `approval.js` | `ask` 决策的等待队列 + `/approval` 路由 | 无人应答/取消/队列满 → deny（fail-closed），并写审计 |
