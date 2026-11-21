@@ -34,11 +34,11 @@
  * @module dsh-vigil/guard
  */
 
-import { basename, resolve } from 'node:path'
-import { pathKey } from '../util.js'
+import { basename, relative, resolve } from 'node:path'
+import { canonicalizePath, getHomeDir, isWithin, pathKey } from '../util.js'
 
-const DESTRUCTIVE_VERB = /\b(?:rm|rmdir|del|erase|rd|remove-item|remove|unlink|mv|move|move-item|ren|rename|rename-item|trash|shred|robocopy(?:\s+\S+){2}\s+\/mir|\/mir)\b/i
-const WRITE_VERB = /\b(?:set-content|add-content|out-file|tee-object|tee|new-item|touch|copy-item|move-item|rename-item|mkdir|sed\s+-i|perl\s+-pi|apply_patch|git\s+(?:apply|checkout|reset|clean)|npm\s+(?:install|ci|uninstall|update)|pnpm\s+(?:add|install|remove|update)|yarn\s+(?:add|install|remove))\b|[^>|]\d?>{1,2}\s*[^&|\s]/i
+const DESTRUCTIVE_VERB = /\b(?:rm|rmdir|del|erase|rd|remove-item|remove|unlink|mv|move|move-item|ren|rename|rename-item|trash|shred|delete|robocopy(?:\s+\S+){2}\s+\/mir|\/mir)\b/i
+const WRITE_VERB = /\b(?:set-content|add-content|out-file|tee-object|tee|new-item|touch|copy-item|move-item|rename-item|mkdir|robocopy|xcopy|clear-content|sed\s+-i|perl\s+-pi|apply_patch|git\s+(?:apply|checkout|reset|clean)|npm\s+(?:install|ci|uninstall|update)|pnpm\s+(?:add|install|remove|update)|yarn\s+(?:add|install|remove))\b|[^>|]\d?>{1,2}\s*[^&|\s]/i
 const PATH_TOOL = /^(?:delete_file|remove_file|delete|remove|unlink|move_file|move|rename|trash)$/i
 const WRITE_PATH_TOOL = /^(?:write|write_file|edit|edit_file|patch|apply_patch|applypatch|create_file|multi_edit|update_file|str_replace_editor|insert_text|replace_text)$/i
 const MANAGER_TOOL = /^(?:plugin_manager|plugin-manager|dsh_plugin_manager)$/i
@@ -69,10 +69,23 @@ export function inspectSelfProtection(execution, options) {
     const stateDir = config?.paths?.stateDir ?? ''
     const protectedDirs = [pluginDir, stateDir]
       .filter(value => typeof value === 'string' && value !== '')
-      .map(value => pathKey(value))
+      .map(value => canonicalizePath(value))
+      .filter(value => value !== '')
     if (protectedDirs.length === 0) return null
     const decision = config?.selfProtection === 'ask' ? 'ask' : 'deny'
     const allowUninstall = config?.allowSelfUninstall === true
+    // Alternative spellings of the protected directories (`~/…`, forward
+    // slashes). Canonical comparison covers 8.3 names and `\\?\`; these cover
+    // the shell forms that never reach the filesystem untouched.
+    const homeDir = getHomeDir()
+    const protectedSpellings = protectedDirs.flatMap(dir => {
+      const spellings = [pathKey(dir).replace(/\\/g, '/')]
+      if (homeDir && isWithin(homeDir, dir)) {
+        const rel = relative(homeDir, dir).split('\\').join('/')
+        spellings.push(pathKey(`~/${rel}`).replace(/\\/g, '/'))
+      }
+      return spellings
+    })
 
     /**
      * @param {string} pathValue
@@ -80,12 +93,55 @@ export function inspectSelfProtection(execution, options) {
      */
     function protectedHit(pathValue) {
       if (typeof pathValue !== 'string' || pathValue.trim() === '') return null
-      const candidate = pathValue.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pathValue) || pathValue.startsWith('\\\\')
-        ? resolve(pathValue)
-        : resolve(process.cwd(), pathValue)
+      const absoluteLike = pathValue.startsWith('/')
+        || /^[A-Za-z]:[\\/]/.test(pathValue)
+        || pathValue.startsWith('\\\\')
+        || pathValue.startsWith('~')
+        || /^\$env:/i.test(pathValue)
+        || /^%[A-Za-z_][A-Za-z0-9_]*%/.test(pathValue)
+      const expanded = absoluteLike ? pathValue : resolve(process.cwd(), pathValue)
+      const candidate = canonicalizePath(expanded)
+      if (candidate === '') return null
       const key = pathKey(candidate)
       for (const dir of protectedDirs) {
-        if (key === dir || key.startsWith(`${dir}\\`) || key.startsWith(`${dir}/`)) return dir
+        const dirKey = pathKey(dir)
+        if (key === dirKey || key.startsWith(`${dirKey}\\`) || key.startsWith(`${dirKey}/`)) return dirKey
+      }
+      return null
+    }
+
+    /**
+     * Path-like tokens of a shell command, for canonical comparison.
+     * @param {string} text
+     * @returns {string[]}
+     */
+    function commandPathTokens(text) {
+      /** @type {string[]} */
+      const tokens = []
+      const pattern = /(?:'[^']*'|"[^"]*"|[^\s;|&<>()]+)/g
+      let match
+      while ((match = pattern.exec(text)) !== null) {
+        const value = match[0].replace(/^['"]|['"]$/g, '')
+        if (value === '') continue
+        if (!/[\\/]|^~|^%[A-Za-z_]|^\$env:/i.test(value)) continue
+        tokens.push(value)
+      }
+      return tokens
+    }
+
+    /**
+     * @param {string} text
+     * @returns {string|null}
+     */
+    function commandMentionsProtected(text) {
+      if (typeof text !== 'string' || text === '') return null
+      const normalized = pathKey(text).replace(/\\/g, '/')
+      for (const spelling of protectedSpellings) {
+        if (normalized.includes(spelling)) return spelling
+      }
+      for (const token of commandPathTokens(text)) {
+        const hit = protectedHit(token)
+        if (hit) return hit
       }
       return null
     }
@@ -96,12 +152,8 @@ export function inspectSelfProtection(execution, options) {
      */
     function protectedCommandWriteHit(text) {
       if (typeof text !== 'string' || text === '') return null
-      const normalized = pathKey(text)
-      for (const dir of protectedDirs) {
-        if (!normalized.includes(dir)) continue
-        if (WRITE_VERB.test(text)) return dir
-      }
-      return null
+      if (!WRITE_VERB.test(text)) return null
+      return commandMentionsProtected(text)
     }
 
     /**
@@ -125,12 +177,8 @@ export function inspectSelfProtection(execution, options) {
      */
     function protectedCommandHit(text) {
       if (typeof text !== 'string' || text === '') return null
-      const normalized = pathKey(text)
-      for (const dir of protectedDirs) {
-        if (!normalized.includes(dir)) continue
-        if (DESTRUCTIVE_VERB.test(text)) return dir
-      }
-      return null
+      if (!DESTRUCTIVE_VERB.test(text)) return null
+      return commandMentionsProtected(text)
     }
 
     const toolName = typeof execution?.name === 'string' ? execution.name : ''
@@ -223,6 +271,11 @@ export function createSelfGuard(options) {
   return execution => {
     try {
       if (options.isDisabled?.()) return undefined
+      // Documented invariant (docs/ARCHITECTURE.md): monitor mode records what it
+      // would have decided and never blocks. The guard is monotonic, so it has to
+      // step aside here explicitly — otherwise `mode: monitor` would still deny
+      // self-protection hits even though the sentinel already allowed them.
+      if (options.config?.mode === 'monitor') return undefined
       const hit = inspectSelfProtection(execution, options)
       if (!hit || hit.kind !== 'deny') return undefined
       return hit.reason

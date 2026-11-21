@@ -21,8 +21,10 @@
  * @module dsh-vigil/tools
  */
 
-import { resolve } from 'node:path'
+import { statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { scanPluginDirectory, formatReportCard } from './audit/scan.js'
+import { describePackDir, getRulePack, pinRulePack, readRuleLock, reloadRulePack, verifyRulePack } from './rules/pack.js'
 import { formatBytes, nowIso, resolvePath, truncate } from './util.js'
 
 /** Shared JSON-schema fragment: an open object result. */
@@ -56,7 +58,9 @@ function output(schema, render) {
  */
 export function registerTools(ctx, deps) {
   const disposers = []
-  const cwd = deps.cwd ?? process.cwd()
+  // An empty effective cwd means "unknown" (the host runs inside the Harness
+  // home): relative scan paths must not silently resolve there.
+  const cwdOf = typeof deps.getCwd === 'function' ? deps.getCwd : () => deps.cwd ?? process.cwd()
   const runtime = () => {
     deps.ensureFresh?.()
     return deps.getRuntime()
@@ -96,17 +100,37 @@ export function registerTools(ctx, deps) {
       const rawPath = typeof args?.path === 'string' ? args.path : ''
       if (rawPath.trim() === '') throw new Error('vigil_scan 需要 path 参数')
       const format = args?.format === 'json' ? 'json' : 'card'
-      const target = resolvePath(rawPath, cwd)
+      const base = cwdOf()
+      const looksAbsolute = /^[A-Za-z]:[\\/]/.test(rawPath) || rawPath.startsWith('/') || rawPath.startsWith('\\\\') || rawPath.startsWith('~')
+      if (!looksAbsolute && !base) {
+        throw new Error('当前工作目录未知（宿主进程运行在 Harness 主目录内）；vigil_scan 请传绝对路径')
+      }
+      const target = resolvePath(rawPath, base || process.cwd())
+      let isDirectory = false
+      try {
+        isDirectory = statSync(target).isDirectory()
+      } catch {
+        isDirectory = false
+      }
+      // A wrong path is an input error, not a security finding: do not report it
+      // as a `blocker` (that would read as "this plugin is dangerous").
+      if (!isDirectory) throw new Error(`vigil_scan 需要一个插件目录：${target} 不存在或不是目录`)
       const report = await scanPluginDirectory(target)
-      runtime().audit?.record({
-        kind: 'event',
-        event: 'scan',
-        tool: 'vigil_scan',
-        decision: 'none',
-        ruleIds: [],
-        reason: `静态审计 ${target}：blocker=${report?.summary?.blocker ?? 0}，review=${report?.summary?.review ?? 0}`,
-        extra: { target, summary: report?.summary ?? null },
-      })
+      // Record only meaningful scans: a clean package does not need an audit
+      // entry per call, but findings and unreadable targets do.
+      const summary = report?.summary ?? {}
+      const unreadable = (report?.findings ?? []).some(finding => finding.ruleId === 'VG-SCAN-01')
+      if ((Number(summary.blocker) || 0) + (Number(summary.review) || 0) > 0 || unreadable) {
+        runtime().audit?.record({
+          kind: 'event',
+          event: 'scan',
+          tool: 'vigil_scan',
+          decision: 'none',
+          ruleIds: [],
+          reason: `静态审计 ${target}：blocker=${summary.blocker ?? 0}，review=${summary.review ?? 0}${unreadable ? '（目标不可读）' : ''}`,
+          extra: { target, summary },
+        })
+      }
       const card = formatReportCard(report)
       return {
         ok: true,
@@ -161,11 +185,167 @@ export function registerTools(ctx, deps) {
           describe: current.sage.describe(),
         },
         integrity,
+        rules: {
+          sources: Array.isArray(current.rulePack?.sources) ? current.rulePack.sources : [],
+          warnings: Array.isArray(current.rulePack?.warnings) ? current.rulePack.warnings : [],
+          externalDir: current.config.rules?.dir || '',
+        },
         installScan: deps.getInstallScan?.() ?? null,
         paths: current.config.paths,
         checkedAt: nowIso(),
       }
       return { ok: true, ...sanitizeJson(status), card: renderStatusCard(status) }
+    },
+  })
+
+  register({
+    name: 'vigil_doctor',
+    description: [
+      'Run a self-check of dsh-vigil and report one pass/fail line per subsystem: hook mount, self-protection guard, browser routes (feed/approval/quarantine/scan/update), inline approval, quarantine, integrity baseline/canary/heartbeat, rule-pack sources, Sage engine, install watcher, audit log and config warnings.',
+      'Use it after installing or changing configuration when something looks inert; it never mutates state.',
+    ].join(' '),
+    parameters: { type: 'object', additionalProperties: false, properties: {} },
+    output: output(
+      { type: 'object', properties: { ok: { type: 'boolean' }, card: { type: 'string' }, checks: { type: 'array', items: { ...OPEN_OBJECT } } }, additionalProperties: true },
+      (_args, value) => {
+        const result = /** @type {any} */ (value)
+        return [{ type: 'text', text: result?.card ?? '自检失败' }]
+      },
+    ),
+    async execute() {
+      const current = runtime()
+      /** @type {Array<{ name: string, ok: boolean, detail: string }>} */
+      const checks = []
+      const push = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail: String(detail ?? '') })
+      const killSwitch = deps.isDisabled?.() === true
+
+      push('插件', true, `v${deps.version} · 模式 ${current.config.mode}`)
+      push('停机开关', !killSwitch, killSwitch ? '已启用：所有拦截被跳过' : '未启用')
+      push('pre-execute 钩子', current.interceptor.enabled, current.interceptor.describe())
+
+      const approval = deps.getApproval?.()
+      const pending = typeof approval?.size === 'number' ? approval.size : 0
+      push('对话内审批', current.config.notify.inlineApproval !== false, `超时 ${Math.round((Number(current.config.notify.approvalTimeoutMs) || 120000) / 1000)}s · 待确认 ${pending}`)
+
+      const routes = deps.getRoutes?.() ?? {}
+      const routeNames = Object.keys(routes)
+      const badRoutes = routeNames.filter(name => routes[name] !== 'ok')
+      push('浏览器路由', routeNames.length > 0 && badRoutes.length === 0,
+        routeNames.length === 0 ? '未注册' : badRoutes.length === 0 ? `${routeNames.length} 条已注册` : `${badRoutes.map(name => `${name}=${routes[name]}`).join('，')}`)
+
+      const quarantine = current.quarantine.stats()
+      push('隔离区', quarantine.enabled, `${quarantine.count} 项 / ${formatBytes(quarantine.bytes)} · ${quarantine.dir}`)
+
+      const integrity = current.integrity.state
+      const integrityOk = integrity.baseline?.state === 'match' && integrity.canary?.state === 'ok' && integrity.heartbeat?.state === 'ok'
+      push('完整性', integrityOk, current.integrity.describe())
+
+      const rules = current.rulePack
+      push('规则包', (rules?.warnings?.length ?? 0) === 0, `${rules?.sources?.length ?? 0} 个来源${rules?.warnings?.length ? ` · ${rules.warnings.length} 条警告` : ''}`)
+
+      const sageEnabled = current.config.sage.enabled !== false
+      push('Sage', !sageEnabled || current.sage.status.state === 'ready',
+        sageEnabled ? current.sage.describe() : '未启用（可选）')
+
+      const install = deps.getInstallScan?.()
+      push('安装审计', !install?.lastError, install?.description ?? '不可用')
+
+      const auditStats = current.audit.stats()
+      const auditFiles = Array.isArray(auditStats.files) ? auditStats.files.length : Number(auditStats.files) || 0
+      push('审计日志', current.config.auditLog.enabled !== false, `${auditStats.total} 条 · ${auditFiles} 个文件 · ${formatBytes(auditStats.sizeBytes ?? 0)}`)
+      const anchor = typeof current.audit.anchorState === 'function' ? current.audit.anchorState() : null
+      if (anchor?.enabled) {
+        push('审计锚定', anchor.state === 'ok', anchor.state === 'ok'
+          ? `HMAC 锚点一致（seq ${anchor.seq ?? '?'}）`
+          : `锚点状态：${anchor.state}${anchor.error ? `（${anchor.error}）` : ''}`)
+      }
+
+      push('配置', (deps.getConfigWarnings?.() ?? []).length === 0,
+        (deps.getConfigWarnings?.() ?? []).length === 0 ? '无警告' : (deps.getConfigWarnings?.() ?? []).join('；'))
+
+      const failed = checks.filter(check => !check.ok)
+      const card = [
+        `守夜人自检：${checks.length - failed.length} / ${checks.length} 通过`,
+        ...checks.map(check => `${check.ok ? '✓' : '✗'} ${check.name} — ${check.detail}`),
+        ...(failed.length > 0 ? ['', '有项目未通过：先看对应说明；需要临时停用时创建 DISABLED 或设置 DSH_VIGIL_DISABLED=1。'] : []),
+      ].join('\n')
+      return { ok: failed.length === 0, checks, card }
+    },
+  })
+
+  register({
+    name: 'vigil_rules',
+    description: [
+      'Inspect, verify or pin the external YAML rule pack (the operator directory, default <DSH_HOME>/vigil/rules).',
+      'status lists which pack files are loaded and their hashes; verify compares them with the hash lock; pin trusts the current files by writing the lock used on the next load.',
+      'Pinned files that change afterwards are rejected on load (fail-safe), so a tampered external pack cannot silently weaken detection.',
+    ].join(' '),
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: { type: 'string', enum: ['status', 'verify', 'pin'], description: 'Operation to perform.' },
+      },
+      required: ['action'],
+    },
+    output: output(
+      { type: 'object', properties: { ok: { type: 'boolean' }, card: { type: 'string' } }, additionalProperties: true },
+      (_args, value) => [{ type: 'text', text: /** @type {any} */ (value)?.card ?? '' }],
+    ),
+    async execute(args) {
+      const current = runtime()
+      const action = String(args?.action ?? 'status')
+      const stateDir = typeof current.config.paths?.stateDir === 'string' ? current.config.paths.stateDir : ''
+      const configured = typeof current.config.rules?.dir === 'string' ? current.config.rules.dir : ''
+      const externalDir = configured !== '' ? resolvePath(configured, stateDir) : (stateDir ? join(stateDir, 'rules') : '')
+      const lockPath = stateDir ? join(stateDir, 'rules-lock.json') : ''
+      const describeFiles = info => (info.names.length === 0
+        ? '（无 .yaml 文件）'
+        : info.names.map(name => `  · ${name}  sha256:${(info.files[name] ?? '').slice(0, 16)}…`).join('\n'))
+
+      if (action === 'status') {
+        const info = describePackDir(externalDir)
+        const lock = readRuleLock(lockPath)
+        const pack = current.rulePack ?? getRulePack()
+        const card = [
+          '守夜人规则包：',
+          `  外部目录：${externalDir || '未配置'}${info.exists ? '' : '（不存在）'}`,
+          '  文件：',
+          describeFiles(info),
+          `  规则锁：${lock ? `${Object.keys(lock.files).length} 个文件（${lock.pinnedAt ?? '未知时间'}）` : '未建立'}`,
+          `  当前生效来源：${(pack?.sources ?? []).length}`,
+          ...(info.error ? [`  错误：${info.error}`] : []),
+        ].join('\n')
+        return { ok: !info.error, action, dir: externalDir, files: info.files, locked: Boolean(lock), card }
+      }
+
+      if (action === 'verify') {
+        const result = verifyRulePack({ externalDir, lockPath })
+        const card = result.ok
+          ? `规则包与锁一致（${(result.files ?? []).length} 个文件）`
+          : [
+            `规则包校验失败：${result.state}`,
+            ...(result.error ? [`  ${result.error}`] : []),
+            ...(result.mismatched?.length ? [`  内容被改动：${result.mismatched.join('、')}`] : []),
+            ...(result.unlisted?.length ? [`  未登记文件：${result.unlisted.join('、')}`] : []),
+            ...(result.missing?.length ? [`  锁中有但目录缺失：${result.missing.join('、')}`] : []),
+          ].join('\n')
+        return { ok: result.ok, action, ...result, card }
+      }
+
+      // pin
+      const pinned = pinRulePack({ externalDir, lockPath })
+      if (!pinned.ok) return { ok: false, action, card: `无法固定规则包：${pinned.error}` }
+      reloadRulePack({ externalDir, lockPath })
+      current.rulePack = getRulePack()
+      return {
+        ok: true,
+        action,
+        dir: externalDir,
+        lockPath,
+        files: pinned.files,
+        card: `已固定 ${pinned.files.length} 个规则文件；下次加载起，内容变化会被拒绝。`,
+      }
     },
   })
 
@@ -221,7 +401,13 @@ export function registerTools(ctx, deps) {
           ruleIds: [],
           reason: result.ok ? `已恢复 ${id} → ${result.restoredTo}` : `恢复失败 ${id}：${result.error}`,
         })
-        return { ok: result.ok, ...result, card: result.ok ? `已恢复：${result.restoredTo}` : `恢复失败：${result.error}` }
+        return {
+          ok: result.ok,
+          ...result,
+          card: result.ok
+            ? `已恢复：${result.restoredTo}${result.conflictPath ? `（原位置已有内容，已移到 ${result.conflictPath}）` : ''}`
+            : `恢复失败：${result.error}`,
+        }
       }
       if (action === 'expire') {
         const result = current.quarantine.expire()
@@ -245,7 +431,7 @@ export function registerTools(ctx, deps) {
           tool: 'vigil_quarantine',
           decision: result.ok ? 'allow' : 'deny',
           ruleIds: [],
-          reason: result.ok ? `永久删除隔离条目 ${id}` : `永久删除失败 ${id}：${result.error}`,
+          reason: result.ok ? `永久删除隔离条目 ${id}` : `未永久删除 ${id}：${result.error}`,
         })
         return { ok: result.ok, ...result, card: result.ok ? `已永久删除 ${id}` : `未删除：${result.error}` }
       }
@@ -265,34 +451,58 @@ export function registerTools(ctx, deps) {
       additionalProperties: false,
       properties: {
         action: { type: 'string', enum: ['tail', 'verify', 'json', 'csv'], description: 'Operation to perform.' },
-        limit: { type: 'integer', description: 'Maximum records to read/export (tail/json/csv); default 50 / 2000.' },
+        limit: { type: 'integer', description: 'Maximum records to read/export (tail default 20, json/csv default 200; capped at 200/1000).' },
       },
       required: ['action'],
     },
     output: output(
       { type: 'object', properties: { ok: { type: 'boolean' }, card: { type: 'string' } }, additionalProperties: true },
-      (_args, value) => [{ type: 'text', text: /** @type {any} */ (value)?.card ?? '' }],
+      (_args, value) => {
+        const result = /** @type {any} */ (value)
+        // `action=json` is an export: the model has to receive the records, not
+        // a sentence saying how many were exported.
+        if (result?.exported && Array.isArray(result.exported.entries)) {
+          return [{ type: 'text', text: JSON.stringify(result.exported, null, 2) }]
+        }
+        return [{ type: 'text', text: result?.card ?? '' }]
+      },
     ),
     async execute(args) {
       const current = runtime()
       const action = args?.action
-      const limit = Number.isFinite(args?.limit) ? Number(args.limit) : undefined
+      const requested = Number(args?.limit)
+      const limit = Number.isFinite(requested) && requested > 0
+        ? Math.min(Math.floor(requested), action === 'tail' ? 200 : 1000)
+        : undefined
       if (action === 'verify') {
         const result = current.audit.verify()
+        const anchor = result.anchor ?? { enabled: false, state: 'disabled' }
+        const anchorLabel = {
+          disabled: '未启用',
+          ok: '锚点一致',
+          missing: '锚点缺失',
+          'no-key': '缺少密钥',
+          'bad-mac': 'MAC 不匹配',
+          mismatch: '链头哈希与锚点不符',
+          ahead: '锚点超前（链被回滚？）',
+          gap: '锚点序号不在链上',
+          corrupt: '锚点文件损坏',
+        }[anchor.state] ?? anchor.state
         return {
           ok: result.ok,
           ...result,
-          card: result.ok
+          card: (result.ok
             ? `审计链校验通过：${result.entries} 条记录，无断裂`
-            : `审计链断裂：${result.reason}（第 ${result.firstBad?.seq ?? '?'} 条，文件 ${result.firstBad?.file ?? '?'}）`,
+            : `审计链断裂：${result.reason}（第 ${result.firstBad?.seq ?? '?'} 条，文件 ${result.firstBad?.file ?? '?'}）`)
+            + `；锚点：${anchorLabel}${anchor.enabled && anchor.seq ? `（seq ${anchor.seq}）` : ''}`,
         }
       }
       if (action === 'json') {
-        const exported = current.audit.exportJson({ limit })
+        const exported = current.audit.exportJson({ limit: limit ?? 200 })
         return { ok: true, exported, card: `已导出 ${exported.entries.length} 条 JSON 记录（共 ${current.audit.stats().total} 条）` }
       }
       if (action === 'csv') {
-        const csv = current.audit.exportCsv({ limit })
+        const csv = current.audit.exportCsv({ limit: limit ?? 200 })
         return { ok: true, csv, card: csv.split('\n').slice(0, 30).join('\n') }
       }
       const entries = current.audit.read({ limit: limit ?? 20 })
@@ -444,6 +654,7 @@ function renderStatusCard(status) {
     status.quarantine.describe,
     status.audit.describe,
     status.sage.describe,
+    `规则包：${status.rules.sources.length} 个来源${status.rules.externalDir ? `（外部目录 ${status.rules.externalDir}）` : '（仅内置）'}`,
     status.installScan?.description ?? null,
     status.integrity.describe,
     `状态目录：${status.paths.stateDir}`,

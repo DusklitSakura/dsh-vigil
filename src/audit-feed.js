@@ -33,9 +33,14 @@ export const AUDIT_FEED_PATH = '/api/dsh-vigil/audit'
  * @returns {object}
  */
 export function buildAuditFeed(runtime, deps, options = {}) {
-  const limit = Math.max(1, Math.min(Number(options.limit ?? 40) || 40, 100))
-  const records = Array.isArray(runtime?.audit?.read?.({ limit: Math.max(limit * 2, 60) }))
-    ? runtime.audit.read({ limit: Math.max(limit * 2, 60) })
+  // The client projects this feed to one session. A window that is too small
+  // lets other sessions (or a busy subagent tree) push the current session's
+  // own blocks out, which read as "本会话还没有拦截记录". Keep a much wider
+  // window and let the per-session projection do the trimming.
+  const limit = Math.max(1, Math.min(Number(options.limit ?? 300) || 300, 500))
+  const windowSize = Math.max(limit * 2, 600)
+  const records = Array.isArray(runtime?.audit?.read?.({ limit: windowSize }))
+    ? runtime.audit.read({ limit: windowSize })
     : []
   /** @type {Array<{ ts: string, tool: string|null, decision: string, wouldBe: string|null, ruleIds: string[], reason: string, sage: object|null, session: string|null }>} */
   const decisions = []
@@ -107,6 +112,15 @@ export function buildAuditFeed(runtime, deps, options = {}) {
     })(),
     decisions: recent,
     counts,
+    /** Read-only status lines for the Settings page card. */
+    integrity: {
+      describe: typeof runtime?.integrity?.describe === 'function' ? runtime.integrity.describe() : '',
+      baseline: runtime?.integrity?.state?.baseline?.state ?? null,
+    },
+    rules: {
+      sources: Array.isArray(runtime?.rulePack?.sources) ? runtime.rulePack.sources.length : 0,
+      warnings: Array.isArray(runtime?.rulePack?.warnings) ? runtime.rulePack.warnings : [],
+    },
     sage: {
       state: typeof sage.state === 'string' ? sage.state : 'unknown',
       version: typeof sage.version === 'string' ? sage.version : null,
@@ -129,6 +143,7 @@ export function buildAuditFeed(runtime, deps, options = {}) {
           lastCheckAt: typeof watcher?.lastCheckAt === 'string' ? watcher.lastCheckAt : null,
           lastError: typeof watcher?.lastError === 'string' ? watcher.lastError : null,
           description: typeof watcher?.describe === 'function' ? watcher.describe() : '安装审计：未启用',
+          state: watcher?.state && typeof watcher.state === 'object' ? watcher.state : null,
           installed: typeof watcher?.installed === 'function' ? watcher.installed() : [],
         }
       } catch {

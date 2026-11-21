@@ -1,0 +1,66 @@
+# dsh-vigil runtime rule data (sentinel half).
+#
+# The matching engine lives in src/sentinel/rules.js; this file only carries the
+# data it matches with. Replacing this file with a newer one updates the rules
+# without shipping a plugin release.
+#
+# Installing an override:
+#   put a *.yaml file into <DSH_HOME>/vigil/rules/ (or rules.dir) — files are
+#   applied after this one, alphabetically; later definitions win per section.
+#
+# Fields per entry:
+#   source: JavaScript regular expression (single-quoted; write '' for a quote)
+#   flags:  i | m | s | u  (optional)
+#   label:  human readable name shown in the block reason
+#
+# `append: true` at the top appends to the built-in list instead of replacing it.
+schema: 1
+id: builtin-sentinel
+
+credentialPatterns:
+  - source: '(?:^|[\\/\s"=])\.ssh(?:[\\/\s"]|$)'
+    flags: i
+    label: SSH 目录
+  - source: '\bid_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?\b'
+    flags: i
+    label: SSH 私钥
+  - source: '\.aws[\\/](?:credentials|config)\b'
+    flags: i
+    label: AWS 凭据文件
+  - source: '\.git-credentials\b'
+    flags: i
+    label: Git 凭据文件
+  - source: '\.npmrc\b'
+    flags: i
+    label: npm 凭据文件
+  - source: '\.gnupg\b'
+    flags: i
+    label: GPG 密钥目录
+  - source: '\b(?:Login Data|key4\.db|logins\.json|cookies\.sqlite)\b'
+    flags: i
+    label: 浏览器凭据库
+  - source: '\.(?:pem|p12|pfx)\b'
+    flags: i
+    label: 证书/私钥文件
+  - source: '(?:^|[\\/\s"=])\.env(?:\.[\w-]+)?(?:[\\/\s"]|$)'
+    flags: i
+    label: .env 环境变量文件
+  - source: '(?:^|[\\/\s"=])\.netrc\b'
+    flags: i
+    label: .netrc 凭据文件
+  - source: '[\\/]\.docker[\\/]config\.json'
+    flags: i
+    label: Docker 凭据文件
+  - source: '[\\/]\.kube[\\/]config\b'
+    flags: i
+    label: Kubernetes 凭据文件
+  - source: '[\\/]\.config[\\/]gh[\\/]hosts\.yml'
+    flags: i
+    label: GitHub CLI 凭据
+  - source: '[\\/]\.config[\\/]gcloud[\\/]application_default_credentials\.json'
+    flags: i
+    label: GCloud 凭据
+
+persistence:
+  - source: '(?:\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile|Microsoft[\\/]Windows[\\/]Start Menu[\\/]Programs[\\/]Startup|HKCU[\\/:]Software[\\/]Microsoft[\\/]Windows[\\/]CurrentVersion[\\/]Run|HKEY_CURRENT_USER[\\/]Software[\\/]Microsoft[\\/]Windows[\\/]CurrentVersion[\\/]Run|\\\\CurrentVersion\\\\Run\b|launchd|systemd\/system|ScheduledTasks)'
+    flags: i

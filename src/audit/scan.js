@@ -59,7 +59,7 @@ const fsp = fs.promises;
  * @property {number} filesScanned
  * @property {Finding[]} findings Sorted and deduped.
  * @property {{ blocker: number, review: number, notice: number, info: number, total: number, byCategory: Record<string, number> }} summary
- * @property {{ filesSkipped: number, bytesSkipped: number, truncated: boolean }} limits
+ * @property {{ filesSkipped: number, bytesSkipped: number, truncated: boolean, deadline?: boolean }} limits
  * @property {string} disclaimer
  */
 
@@ -102,8 +102,15 @@ function normalizeOptions(options) {
     maxFileBytes: asPositiveInteger(source.maxFileBytes, SCAN_LIMITS.maxFileBytes, SCAN_LIMITS.maxFileBytes),
     maxDepth: SCAN_LIMITS.maxDepth,
     includeInfo: source.includeInfo !== false,
+    /** Absolute timestamp; 0 disables the time budget. */
+    deadlineAt: Number(source.deadlineAt) > 0 ? Number(source.deadlineAt) : 0,
+    /** Optional progress hook: (relativePath) => void. */
+    onProgress: typeof source.onProgress === 'function' ? source.onProgress : null,
   };
 }
+
+/** Yield to the event loop so a large scan cannot stall tool dispatch. */
+const yieldToEventLoop = () => new Promise(resolve => setImmediate(resolve));
 
 /** Deterministic string comparison (locale-independent). */
 function compareStrings(a, b) {
@@ -192,10 +199,23 @@ async function discoverFiles(rootDir, options) {
     filesSkipped: 0,
     bytesSkipped: 0,
     truncated: false,
+    deadline: false,
+    visited: 0,
+    /** Files skipped because their extension is not scannable text. */
+    nonTextFiles: 0,
+    /** Directories skipped by policy (dist/build/…), reported honestly. */
+    ignoredDirectories: new Set(),
   };
+
+  const expired = () => options.deadlineAt > 0 && Date.now() > options.deadlineAt;
 
   const walk = async (absoluteDir, relativeDir, depth) => {
     if (state.truncated) return;
+    if (expired()) {
+      state.truncated = true;
+      state.deadline = true;
+      return;
+    }
     let entries;
     try {
       entries = await fsp.readdir(absoluteDir, { withFileTypes: true });
@@ -211,6 +231,13 @@ async function discoverFiles(rootDir, options) {
 
     for (const entry of entries) {
       if (state.truncated) return;
+      if (expired()) {
+        state.truncated = true;
+        state.deadline = true;
+        return;
+      }
+      state.visited += 1;
+      if (state.visited % 25 === 0) await yieldToEventLoop();
       const rel = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
 
       // Symlinks (including Windows junctions) are never followed.
@@ -219,7 +246,10 @@ async function discoverFiles(rootDir, options) {
         continue;
       }
       if (entry.isDirectory()) {
-        if (IGNORED_DIRECTORIES.has(entry.name)) continue;
+        if (IGNORED_DIRECTORIES.has(entry.name)) {
+          state.ignoredDirectories.add(entry.name);
+          continue;
+        }
         if (depth + 1 > options.maxDepth) {
           state.filesSkipped += 1;
           continue;
@@ -227,10 +257,17 @@ async function discoverFiles(rootDir, options) {
         await walk(path.join(absoluteDir, entry.name), rel, depth + 1);
         continue;
       }
-      if (!entry.isFile()) continue;
+      if (!entry.isFile()) {
+        // FIFOs, devices, junctions to nowhere: an entry we cannot read.
+        state.filesSkipped += 1;
+        continue;
+      }
 
       const extension = path.extname(entry.name).toLowerCase();
-      if (!TEXT_EXTENSIONS.has(extension)) continue;
+      if (!TEXT_EXTENSIONS.has(extension)) {
+        state.nonTextFiles += 1;
+        continue;
+      }
 
       if (state.files.length >= options.maxFiles) {
         state.truncated = true;
@@ -373,10 +410,113 @@ function elapsedMs(startedClock) {
 /** Read a text file as UTF-8; resolves to null on any error. */
 async function readTextFile(absolutePath) {
   try {
-    return { ok: true, text: await fsp.readFile(absolutePath, 'utf8') };
+    const text = stripBom(await fsp.readFile(absolutePath, 'utf8'))
+    // A `.js` file full of replacement characters is binary (or a non-UTF-8
+    // encoding). Scanner rules would only produce garbage evidence from it.
+    if (looksBinary(text)) return { ok: false, reason: '非 UTF-8 文本（疑似二进制）' }
+    return { ok: true, text }
   } catch (error) {
-    return { ok: false, reason: truncateReason(error) };
+    return { ok: false, reason: truncateReason(error) }
   }
+}
+
+/** A small ratio of U+FFFD is normal in mixed text; a lot means "not text". */
+function looksBinary(text) {
+  if (typeof text !== 'string' || text === '') return false
+  const replacement = (text.match(/\uFFFD/g) || []).length
+  if (replacement === 0) return false
+  return replacement > 8 || replacement / text.length > 0.01
+}
+
+/** A UTF-8 BOM must not break JSON.parse / the first-line rules. */
+function stripBom(text) {
+  return typeof text === 'string' && text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/**
+ * Read a text file with an explicit size ceiling. Used for the two files that
+ * declare how a bundle mounts (manifest, patch) so a padded package cannot hide
+ * them behind the general file budget.
+ * @param {string} absolutePath
+ * @param {number} maxBytes
+ * @returns {Promise<{ ok: true, text: string } | { ok: false, reason: string }>}
+ */
+async function readTextFileCapped(absolutePath, maxBytes) {
+  try {
+    const stat = await fsp.stat(absolutePath)
+    if (!stat.isFile()) return { ok: false, reason: '不是普通文件' }
+    if (stat.size > maxBytes) return { ok: false, reason: `文件超过 ${maxBytes} 字节` }
+    return { ok: true, text: stripBom(await fsp.readFile(absolutePath, 'utf8')) }
+  } catch (error) {
+    return { ok: false, reason: truncateReason(error) }
+  }
+}
+
+/**
+ * Every path-like string a manifest declares as an entry point.
+ * @param {any} pkg
+ * @returns {string[]}
+ */
+function collectEntryPaths(pkg) {
+  /** @type {string[]} */
+  const out = []
+  const visit = value => {
+    if (typeof value === 'string') {
+      const cleaned = value.replace(/^\.\//, '').trim()
+      if (cleaned !== '') out.push(cleaned)
+      return
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    if (value && typeof value === 'object') {
+      for (const item of Object.values(value)) visit(item)
+    }
+  }
+  if (!pkg || typeof pkg !== 'object') return out
+  visit(pkg.main)
+  visit(pkg.module)
+  visit(pkg.browser)
+  visit(pkg.bin)
+  visit(pkg.exports)
+  return out
+}
+
+/**
+ * Patch paths declared by `dsh.bundle.patch` (string or array).
+ * @param {any} pkg parsed package.json
+ * @returns {string[]}
+ */
+function declaredPatchPaths(pkg) {
+  try {
+    const patch = pkg?.dsh?.bundle?.patch
+    if (typeof patch === 'string' && patch.trim() !== '') return [patch.trim()]
+    if (Array.isArray(patch)) return patch.filter(item => typeof item === 'string' && item.trim() !== '').map(item => item.trim())
+  } catch {
+    // malformed manifest: fall back to the conventional file name
+  }
+  return []
+}
+
+/**
+ * @param {string} spec
+ * @returns {string} relative POSIX path without a leading ./
+ */
+function normalizePatchRel(spec) {
+  return String(spec).replace(/\\/g, '/').replace(/^\.\//, '')
+}
+
+/**
+ * @param {string} rootDir
+ * @param {string} rel
+ * @returns {boolean} whether `rel` stays inside `rootDir`
+ */
+function patchInside(rootDir, rel) {
+  const base = path.resolve(rootDir)
+  const absolute = path.resolve(base, rel)
+  const relativePath = path.relative(base, absolute)
+  return relativePath !== '' && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
 }
 
 /** Rewrite a relative path to POSIX separators for reports. */
@@ -442,10 +582,92 @@ export async function scanPluginDirectory(dir, options = {}) {
       });
     }
 
-    const patchExists = discovery.files.some((file) => path.posix.basename(relPosix(file.rel)) === 'cordis.patch.yml');
-    const rootManifestFile = discovery.files.find((file) => relPosix(file.rel) === 'package.json');
-    let pkg = null;
-    let manifestText = '';
+    // The manifest and every declared patch are read first and directly: a
+    // package can pad itself with hundreds of text files, and the alphabetical
+    // file budget would otherwise hide exactly the two files that declare how
+    // the bundle is mounted and what it overrides.
+    const MANIFEST_MAX_BYTES = 2 * 1024 * 1024
+    const manifestRel = 'package.json'
+    /** Relative paths already read directly; the walk skips them. */
+    const readDirectly = new Set()
+    let pkg = null
+    let manifestText = ''
+    const manifestResult = await readTextFileCapped(path.join(absoluteDir, manifestRel), MANIFEST_MAX_BYTES)
+    if (manifestResult.ok) {
+      manifestText = manifestResult.text
+      readDirectly.add(manifestRel)
+      filesScanned += 1
+      try {
+        const parsed = JSON.parse(manifestText)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) pkg = parsed
+      } catch {
+        pkg = null
+      }
+    } else if (!/ENOENT/.test(manifestResult.reason)) {
+      filesSkipped += 1
+      rawFindings.push({
+        ruleId: 'VG-SCAN-02',
+        file: manifestRel,
+        line: null,
+        evidence: `无法读取 package.json（${manifestResult.reason}）`,
+        vars: { reason: manifestResult.reason },
+      })
+    }
+
+    // `dsh.bundle.patch` is what dsh actually loads; the file does not have to be
+    // named `cordis.patch.yml`. Escaping specs are reported by the manifest
+    // rules, so they are not read here.
+    const patchPaths = []
+    for (const spec of declaredPatchPaths(pkg)) {
+      const rel = normalizePatchRel(spec)
+      if (!patchInside(absoluteDir, rel)) continue
+      if (!patchPaths.includes(rel)) patchPaths.push(rel)
+    }
+    if (patchPaths.length === 0) patchPaths.push('cordis.patch.yml')
+    // Build outputs are skipped for speed, but if the package declares one as
+    // its entry point then "0 findings" would be a lie: say that the code that
+    // actually runs was never read, and let the install gate ask.
+    const entryPaths = collectEntryPaths(pkg)
+    const ignoredEntryDirs = [...new Set(entryPaths
+      .map(entry => entry.split(/[\\/]/)[0])
+      .filter(first => IGNORED_DIRECTORIES.has(first)))]
+    if (ignoredEntryDirs.length > 0) {
+      const sample = entryPaths
+        .filter(entry => ignoredEntryDirs.includes(entry.split(/[\\/]/)[0]))
+        .slice(0, 3)
+        .join('、')
+      rawFindings.push({
+        ruleId: 'VG-SCAN-04',
+        file: 'package.json',
+        line: null,
+        evidence: `入口位于未扫描目录：${ignoredEntryDirs.map(name => `${name}/`).join('、')}（${sample}）`,
+        vars: { dirs: ignoredEntryDirs.map(name => `${name}/`).join('、') },
+      })
+    }
+    /** @type {string[]} */
+    const foundPatches = []
+    for (const rel of patchPaths) {
+      if (readDirectly.has(rel)) continue
+      const result = await readTextFileCapped(path.join(absoluteDir, rel), scanOptions.maxFileBytes)
+      if (!result.ok) {
+        // A declared-but-oversized/unreadable patch is a blind spot, not "no patch".
+        if (!/ENOENT/.test(result.reason)) {
+          filesSkipped += 1
+          rawFindings.push({
+            ruleId: 'VG-SCAN-02',
+            file: rel,
+            line: null,
+            evidence: `无法读取补丁文件（${result.reason}）`,
+            vars: { reason: result.reason },
+          })
+        }
+        continue
+      }
+      readDirectly.add(rel)
+      filesScanned += 1
+      foundPatches.push(rel)
+      if (/\.ya?ml$/i.test(rel)) rawFindings.push(...scanPatchFile({ file: rel, text: result.text }))
+    }
 
     const readFile = async (file) => {
       const result = await readTextFile(file.abs);
@@ -464,35 +686,25 @@ export async function scanPluginDirectory(dir, options = {}) {
       return result.text;
     };
 
-    // package.json is read first: it drives client-half detection and the
-    // dsh manifest sanity checks.
-    if (rootManifestFile) {
-      const text = await readFile(rootManifestFile);
-      if (text !== null) {
-        manifestText = text;
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) pkg = parsed;
-        } catch {
-          pkg = null;
-        }
-        rawFindings.push(...scanPackageManifest({
-          file: relPosix(rootManifestFile.rel),
-          text: manifestText,
-          patchExists,
-        }));
-      }
-    }
-
+    let deadlineHit = false
+    let processed = 0
     for (const file of discovery.files) {
-      if (rootManifestFile && file === rootManifestFile) continue;
+      if (scanOptions.deadlineAt > 0 && Date.now() > scanOptions.deadlineAt) {
+        deadlineHit = true
+        break
+      }
+      processed += 1
+      if (processed % 25 === 0) await yieldToEventLoop()
       const relativeFile = relPosix(file.rel);
+      if (readDirectly.has(relativeFile)) continue;
       const text = await readFile(file);
       if (text === null) continue;
       const baseName = path.posix.basename(relativeFile);
       const extension = path.posix.extname(relativeFile).toLowerCase();
-      if (baseName === 'cordis.patch.yml') {
+      if (baseName === 'cordis.patch.yml' || patchPaths.includes(relativeFile)) {
+        if (!foundPatches.includes(relativeFile)) foundPatches.push(relativeFile);
         rawFindings.push(...scanPatchFile({ file: relativeFile, text }));
+        scanOptions.onProgress?.(relativeFile);
         continue;
       }
       if (CODE_EXTENSIONS.has(extension)) {
@@ -502,12 +714,23 @@ export async function scanPluginDirectory(dir, options = {}) {
           isClient: isClientFile(relativeFile, pkg),
         }));
       }
+      scanOptions.onProgress?.(relativeFile);
       // Other text files (.json/.yml/.md) are read for completeness/limits but
       // deliberately not matched with code rules (documented limitation).
     }
 
-    if (discovery.truncated || filesSkipped > 0) {
-      const detail = `${filesSkipped} 个文件被跳过${discovery.truncated ? '，且结果因文件数上限被截断' : ''}`;
+    const patchExists = foundPatches.length > 0;
+    if (manifestText !== '') {
+      rawFindings.push(...scanPackageManifest({
+        file: manifestRel,
+        text: manifestText,
+        patchExists,
+      }));
+    }
+
+    if (discovery.truncated || deadlineHit || filesSkipped > 0) {
+      const reason = deadlineHit ? '，且达到时间上限' : discovery.truncated ? '，且结果因文件数上限被截断' : '';
+      const detail = `${filesSkipped} 个文件被跳过${reason}`;
       rawFindings.push({
         ruleId: 'VG-SCAN-03',
         file: '.',
@@ -524,6 +747,18 @@ export async function scanPluginDirectory(dir, options = {}) {
       isDshPlugin: Boolean(pkg && typeof pkg === 'object' && pkg.dsh) || patchExists,
     };
 
+    // Self-declared test fixtures: packages that ship deliberately malicious
+    // samples under test/ can mark themselves `dsh.vigil.selfScan`; those files
+    // are not runtime code, so they are demoted instead of blocking the install.
+    if (pkg && pkg.dsh && pkg.dsh.vigil && pkg.dsh.vigil.selfScan === true) {
+      for (const finding of rawFindings) {
+        const relative = typeof finding.file === 'string' ? finding.file.replace(/\\/g, '/') : ''
+        if (!relative.startsWith('test/')) continue
+        finding.severity = 'notice'
+        finding.evidence = `${finding.evidence ?? ''}（自扫描夹具：默认不当作运行时代码）`
+      }
+    }
+
     return buildReport({
       target,
       startedAt,
@@ -533,7 +768,11 @@ export async function scanPluginDirectory(dir, options = {}) {
       limits: {
         filesSkipped,
         bytesSkipped: discovery.bytesSkipped,
-        truncated: discovery.truncated,
+        truncated: discovery.truncated || deadlineHit,
+        deadline: discovery.deadline || deadlineHit,
+        ignoredDirectories: [...discovery.ignoredDirectories],
+        unauditedEntry: ignoredEntryDirs.length > 0,
+        nonTextFiles: discovery.nonTextFiles,
       },
       includeInfo: scanOptions.includeInfo,
     });
@@ -626,7 +865,7 @@ export function formatReportCard(report, options = {}) {
   }
 
   push('扫描限制：');
-  push(`  跳过文件：${limits.filesSkipped ?? 0} · 跳过字节：${limits.bytesSkipped ?? 0} · 结果被截断：${limits.truncated ? '是' : '否'}`);
+  push(`  跳过文件：${limits.filesSkipped ?? 0} · 跳过字节：${limits.bytesSkipped ?? 0} · 非文本跳过：${limits.nonTextFiles ?? 0} · 结果被截断：${limits.truncated ? '是' : '否'}`);
   push('');
   push('免责声明：');
   push(`  ${source.disclaimer ?? DISCLAIMER}`);

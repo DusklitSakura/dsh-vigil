@@ -47,6 +47,7 @@ const SAGE_ACTION_PATH = '/api/dsh-vigil/sage-action'
     /** Authenticated POST target for the inline approval buttons. */
     const APPROVAL_PATH = '/api/dsh-vigil/approval'
 const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
+const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
     /** Poll cadence for the drawer (only while the page is visible). */
     const FEED_INTERVAL_MS = 2500
 
@@ -69,7 +70,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       presetStandard: '标准',
       presetStrict: '严格',
       presetPlaceholder: '选择预设',
-      modeSection: '运行模式',
+      modeSection: '拦截模式',
       deleteSection: '删除防护',
       sentinelSection: '运行时检查',
       quarantineSection: '隔离区',
@@ -95,8 +96,17 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       optBalanced: '均衡',
       optParanoid: '严格',
       optRelaxed: '宽松',
-      labelEnforce: '拦截开关',
+      labelEnforce: '开启拦截（enforce）',
       hintEnforce: '开启时真正阻止危险调用；关闭时只在审计日志里标记“本应拦截”',
+      statusLoading: '正在读取运行状态…',
+      statusMode: '模式：{mode}',
+      statusEnforceMode: '拦截',
+      statusMonitorMode: '仅记录（monitor）',
+      statusCounts: '最近决策 放行 {allow} · 询问 {ask} · 拦截 {deny}',
+      statusQuarantine: '隔离区 {count} 项 / {size}',
+      statusAudit: '审计 {count} 条',
+      statusSage: 'Sage {state}（{rules} 条规则）',
+      statusRules: '规则包 {count} 个来源',
       labelLocale: '卡片语言',
       hintLocale: '拒绝理由与审计卡片的语言',
       labelAllowSelfUninstall: '允许代理卸载本插件',
@@ -104,6 +114,8 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       labelSelfProtection: '保护插件自身',
       hintSelfProtection: '默认直接拦截删除、写入/编辑、卸载/停用或替换插件自身与状态目录；改为“询问”后会在对话内等你允许（不支持直接允许）',
       labelTools: '注册 vigil_* 工具',
+      labelRulesDir: '外部规则包目录',
+      hintRulesDir: 'YAML 规则包（凭证路径/密钥形态/外发 API 等）；留空用 <DSH_HOME>/vigil/rules，规则更新无需重装插件',
       hintTools: '关闭后代理无法使用扫描、状态、隔离区、审计等工具',
       labelKillSwitch: '紧急停用开关',
       hintKillSwitch: '允许 DISABLED 文件与环境变量绕过全部拦截（用于紧急恢复）',
@@ -120,7 +132,8 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       labelMaxFiles: '单次/会话文件数上限',
       hintMaxFiles: '预计删除文件数超过该值即拦截，并列出本会话已放行的删除',
       labelMaxBytes: '单次/会话容量上限',
-      labelProjectRoot: '把项目根按高风险处理',
+      labelProjectRoot: '把项目根按高风险处理',      labelProjectRootPath: '工作区目录',
+      hintProjectRootPath: '相对删除目标与“项目根”保护的基准；留空时自动判断（宿主进程在 Harness 主目录内则不猜测）',
       labelObserveScale: '累计本会话删除规模',
       labelSentinelEnabled: '运行时检查',
       labelCredentialReads: '读取凭证材料',
@@ -144,6 +157,10 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       labelCanary: '金丝雀文件',
       labelInterval: '检查间隔',
       labelAuditEnabled: '审计日志',
+      labelAnchorEnabled: '链头锚定（HMAC）',
+      hintAnchorEnabled: '用环境变量里的密钥对链头做 HMAC，防止整链被重写；密钥名见 auditLog.anchor.keyEnv（默认 DSH_VIGIL_ANCHOR_KEY）',
+      labelAnchorEveryN: '锚定间隔',
+      unitRecords: '条',
       labelLogArguments: '记录参数摘要',
       hintLogArguments: '关闭后只记录摘要哈希与长度',
       labelMaxBytesLog: '单个日志块大小',
@@ -195,6 +212,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       auditSubtitle: '来自本机哈希链审计日志的脱敏摘要',
       auditClose: '关闭',
       auditEmptyFiltered: '本会话还没有拦截或询问记录。',
+      auditEmptyFilteredButAllows: '本会话没有拦截/询问记录（只有放行记录，可切「显示全部」查看）。',
       auditEmptyAll: '还没有任何决策记录。',
       auditClearAll: '清理所有会话审计日志',
       auditClearAllConfirm: '再次点击确认清理全部',
@@ -229,6 +247,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       dockAlwaysAllowFailed: '操作失败',
       promptMore: '另有 {count} 个待确认请求',
       promptSessionHint: '“允许”会记住本会话中相同工具与规则',
+      promptSource: '请求来自会话 {session}',
       unitSeconds: '秒',
       dockRefresh: '刷新',
       dockOffline: '暂时无法读取审计记录',
@@ -238,7 +257,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       gradeSafe: '安全',
       installSettingsTitle: '插件安装审计',
       pluginAuditButton: '插件审计',
-      installSettingsHint: '安装/更新插件时自动静态扫描；这里也可以不依赖会话手动重新扫描。',
+      installSettingsHint: '安装/更新插件时自动静态扫描；这里也可以不依赖会话手动重新扫描。只统计 profile 依赖中的第三方 bundle（内置 @deepseek-ai/* 与未在此列表中的插件不在扫描范围）。',
       updateTitle: '插件更新',
       updateCheck: '检查更新',
       updateChecking: '检查中…',
@@ -335,7 +354,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       presetStandard: 'Standard',
       presetStrict: 'Strict',
       presetPlaceholder: 'Choose a preset',
-      modeSection: 'Mode',
+      modeSection: 'Interception mode',
       deleteSection: 'Deletion guard',
       sentinelSection: 'Runtime checks',
       quarantineSection: 'Quarantine',
@@ -361,8 +380,17 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       optBalanced: 'Balanced',
       optParanoid: 'Strict',
       optRelaxed: 'Relaxed',
-      labelEnforce: 'Interception',
+      labelEnforce: 'Enforce interception',
       hintEnforce: 'On blocks dangerous calls; off only records wouldBe in the audit log',
+      statusLoading: 'Reading runtime status…',
+      statusMode: 'Mode: {mode}',
+      statusEnforceMode: 'enforce',
+      statusMonitorMode: 'monitor (record only)',
+      statusCounts: 'Recent: {allow} allowed · {ask} asked · {deny} blocked',
+      statusQuarantine: 'Quarantine {count} entries / {size}',
+      statusAudit: 'Audit {count} records',
+      statusSage: 'Sage {state} ({rules} rules)',
+      statusRules: 'Rule packs: {count} sources',
       labelLocale: 'Card language',
       hintLocale: 'Language of deny reasons and audit cards',
       labelAllowSelfUninstall: 'Allow the agent to uninstall this plugin',
@@ -370,6 +398,8 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       labelSelfProtection: 'Protect the plugin itself',
       hintSelfProtection: 'Deny deleting, writing/editing, uninstalling, disabling or replacing the plugin/state dirs; choose "Ask" to park the call for Allow/Deny (Allow-all is not offered)',
       labelTools: 'Register vigil_* tools',
+      labelRulesDir: 'External rule pack directory',
+      hintRulesDir: 'YAML rule packs (credential paths, secret shapes, egress APIs); empty means <DSH_HOME>/vigil/rules, so rules can update without reinstalling the plugin.',
       hintTools: 'When off the agent cannot call the scan/status/quarantine/audit tools',
       labelKillSwitch: 'Emergency stop switch',
       hintKillSwitch: 'Allows the DISABLED file and env var to bypass interception (recovery)',
@@ -387,6 +417,8 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       hintMaxFiles: 'A deletion estimated above this is blocked and lists what the session already allowed',
       labelMaxBytes: 'Per-call / session size limit',
       labelProjectRoot: 'Treat the project root as high risk',
+      labelProjectRootPath: 'Workspace directory',
+      hintProjectRootPath: 'Base for relative delete targets and the project-root guard; empty means auto-detect (the host cwd inside the Harness home is not guessed).',
       labelObserveScale: 'Meter accumulated session deletions',
       labelSentinelEnabled: 'Runtime checks',
       labelCredentialReads: 'Credential material access',
@@ -410,6 +442,10 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       labelCanary: 'Canary file',
       labelInterval: 'Check interval',
       labelAuditEnabled: 'Audit log',
+      labelAnchorEnabled: 'Chain-head anchor (HMAC)',
+      hintAnchorEnabled: 'HMAC the chain head with a key from the environment, so a full rewrite is detectable; see auditLog.anchor.keyEnv (default DSH_VIGIL_ANCHOR_KEY).',
+      labelAnchorEveryN: 'Anchor every',
+      unitRecords: 'records',
       labelLogArguments: 'Log argument summaries',
       hintLogArguments: 'When off only the digest and length are stored',
       labelMaxBytesLog: 'Chunk size',
@@ -461,6 +497,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       auditSubtitle: 'Scrubbed summaries from the local hash-chained audit log',
       auditClose: 'Close',
       auditEmptyFiltered: 'No blocked or questioned calls in this session yet.',
+      auditEmptyFilteredButAllows: 'No blocked or questioned calls in this session (only allowed calls; switch to "Show all").',
       auditEmptyAll: 'No decisions recorded yet.',
       auditClearAll: 'Clear all session audit logs',
       auditClearAllConfirm: 'Click again to confirm clearing all',
@@ -495,6 +532,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       dockAlwaysAllowFailed: 'Action failed',
       promptMore: '{count} more pending requests',
       promptSessionHint: '"Allow" remembers the same tool and rules for this session',
+      promptSource: 'Requested by session {session}',
       unitSeconds: 's',
       dockRefresh: 'Refresh',
       dockOffline: 'Audit records are temporarily unavailable',
@@ -504,7 +542,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       gradeSafe: 'Safe',
       installSettingsTitle: 'Plugin install audits',
       pluginAuditButton: 'Plugin audits',
-      installSettingsHint: 'Installs and updates are scanned automatically; re-scan manually here — no chat session required.',
+      installSettingsHint: 'Installs and updates are scanned automatically; re-scan manually here — no chat session required. Only third-party bundles in the profile dependencies are tracked (built-in @deepseek-ai/* packages are not).',
       updateTitle: 'Plugin update',
       updateCheck: 'Check for updates',
       updateChecking: 'Checking…',
@@ -620,6 +658,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
           { path: 'deleteGuard.thresholds.maxFiles', type: 'number', labelKey: 'labelMaxFiles', hintKey: 'hintMaxFiles', min: 1, step: 100, unitKey: 'unitFiles' },
           { path: 'deleteGuard.thresholds.maxBytes', type: 'number', labelKey: 'labelMaxBytes', min: 1, step: 10, unitKey: 'unitMiB', factor: MIB },
           { path: 'deleteGuard.includeProjectRootAsHigh', type: 'switch', labelKey: 'labelProjectRoot' },
+          { path: 'deleteGuard.projectRoot', type: 'text', labelKey: 'labelProjectRootPath', hintKey: 'hintProjectRootPath' },
           { path: 'deleteGuard.observeScale', type: 'switch', labelKey: 'labelObserveScale' },
         ],
       },
@@ -663,6 +702,8 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
           { path: 'auditLog.maxBytes', type: 'number', labelKey: 'labelMaxBytesLog', min: 4096, step: 1024, unitKey: 'unitMiB', factor: MIB },
           { path: 'auditLog.maxFiles', type: 'number', labelKey: 'labelMaxFilesLog', min: 1, step: 1 },
           { path: 'auditLog.argumentChars', type: 'number', labelKey: 'labelArgumentChars', min: 16, step: 10 },
+          { path: 'auditLog.anchor.enabled', type: 'switch', labelKey: 'labelAnchorEnabled', hintKey: 'hintAnchorEnabled' },
+          { path: 'auditLog.anchor.everyN', type: 'number', labelKey: 'labelAnchorEveryN', min: 1, step: 10, unitKey: 'unitRecords' },
         ],
       },
       {
@@ -693,6 +734,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
           { path: 'selfProtection', type: 'select', labelKey: 'labelSelfProtection', hintKey: 'hintSelfProtection', options: [{ value: 'deny', labelKey: 'optDeny' }, { value: 'ask', labelKey: 'optAsk' }] },
           { path: 'allowSelfUninstall', type: 'switch', labelKey: 'labelAllowSelfUninstall', hintKey: 'hintAllowSelfUninstall' },
           { path: 'tools.enabled', type: 'switch', labelKey: 'labelTools', hintKey: 'hintTools' },
+          { path: 'rules.dir', type: 'text', labelKey: 'labelRulesDir', hintKey: 'hintRulesDir' },
           { path: 'killSwitch.enabled', type: 'switch', labelKey: 'labelKillSwitch', hintKey: 'hintKillSwitch' },
         ],
       },
@@ -856,7 +898,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
      * ------------------------------------------------------------------ */
     async function loadFeed() {
       if (typeof fetch !== 'function') return null
-      const response = await fetch(`${FEED_PATH}?limit=40`, { cache: 'no-store', credentials: 'same-origin' })
+      const response = await fetch(`${FEED_PATH}?limit=300`, { cache: 'no-store', credentials: 'same-origin' })
       if (!response.ok) throw new Error(`feed ${response.status}`)
       const data = await response.json()
       if (!data || data.ok !== true) throw new Error('feed payload invalid')
@@ -1370,7 +1412,9 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
         ),
         feedError ? h('div', { className: 'dsh-vigil-dock-empty' }, t('dockOffline')) : null,
         visible.length === 0
-          ? h('div', { className: 'dsh-vigil-modal-empty' }, showAll ? t('auditEmptyAll') : t('auditEmptyFiltered'))
+          ? h('div', { className: 'dsh-vigil-modal-empty' }, showAll
+            ? t('auditEmptyAll')
+            : (decisions.length > 0 ? t('auditEmptyFilteredButAllows') : t('auditEmptyFiltered')))
           : h('ul', { className: 'dsh-vigil-audit-list' }, visible.map(entry => h(AuditRow, { key: `${entry.ts}-${entry.tool}-${entry.reason}`, entry, t }))),
       ))
       return typeof createPortal === 'function' ? createPortal(dialog, document.body) : dialog
@@ -1732,6 +1776,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
             [
               active.ruleIds?.length ? active.ruleIds.join(' · ') : null,
               active.sage?.threatId ? `${t('dockSageBy')} ${active.sage.threatId}` : null,
+              active.session ? t('promptSource').replace('{session}', String(active.session).slice(0, 16)) : null,
               pending.length > 1 ? t('promptMore').replace('{count}', String(pending.length - 1)) : null,
               allowSessionConfirm ? t('promptAllowHint') : null,
               t('promptSessionHint'),
@@ -2528,6 +2573,9 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       const [auditClearBusy, setAuditClearBusy] = React.useState(false)
       const [auditClearConfirm, setAuditClearConfirm] = React.useState(false)
       const [auditClearMessage, setAuditClearMessage] = React.useState(null)
+      const [quarantineBusy, setQuarantineBusy] = React.useState(false)
+      const [quarantineConfirm, setQuarantineConfirm] = React.useState(false)
+      const [quarantineMessage, setQuarantineMessage] = React.useState(null)
       const [openGroups, setOpenGroups] = React.useState(loadOpenGroups)
       const [sageBusy, setSageBusy] = React.useState(false)
       const [sageConfirm, setSageConfirm] = React.useState(false)
@@ -2538,6 +2586,32 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
       const [updateBusy, setUpdateBusy] = React.useState(false)
       const [updateConfirm, setUpdateConfirm] = React.useState(false)
       const [updateMessage, setUpdateMessage] = React.useState(null)
+      const feedState = useFeed()
+
+      const statusLine = React.useMemo(() => {
+        const data = feedState.data
+        if (!data) return t('statusLoading')
+        const counts = data.counts ?? {}
+        const quarantine = data.quarantine ?? {}
+        const mode = data.mode === 'monitor' ? t('statusMonitorMode') : t('statusEnforceMode')
+        const parts = [
+          t('statusMode').replace('{mode}', mode),
+          t('statusCounts')
+            .replace('{allow}', String(counts.allow ?? 0))
+            .replace('{ask}', String(counts.ask ?? 0))
+            .replace('{deny}', String(counts.deny ?? 0)),
+          t('statusQuarantine')
+            .replace('{count}', String(quarantine.count ?? 0))
+            .replace('{size}', formatBytes(quarantine.bytes ?? 0)),
+          t('statusAudit').replace('{count}', String(data.audit?.count ?? 0)),
+          t('statusSage')
+            .replace('{state}', String(data.sage?.state ?? '?'))
+            .replace('{rules}', String(data.sage?.rules ?? 0)),
+          t('statusRules').replace('{count}', String(data.rules?.sources ?? 0)),
+          typeof data.integrity?.describe === 'string' && data.integrity.describe !== '' ? data.integrity.describe : null,
+        ].filter(Boolean)
+        return parts.join(' · ')
+      }, [feedState.data, t])
 
       const checkUpdate = React.useCallback(async () => {
         setUpdateState('checking')
@@ -2635,6 +2709,35 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
           setAuditClearBusy(false)
         }
       }, [auditClearBusy, auditClearConfirm, t])
+
+      /** Expire old entries or (two-click) purge the whole quarantine. */
+      const runQuarantine = React.useCallback(async action => {
+        if (quarantineBusy) return
+        if (action === 'purge-all' && !quarantineConfirm) {
+          setQuarantineConfirm(true)
+          setQuarantineMessage(null)
+          return
+        }
+        setQuarantineConfirm(false)
+        setQuarantineBusy(true)
+        setQuarantineMessage(null)
+        try {
+          const response = await fetch(QUARANTINE_PATH, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(action === 'purge-all' ? { action, confirm: true } : { action }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || !payload?.ok) throw new Error(payload?.error ?? `HTTP ${response.status}`)
+          setQuarantineMessage(`${t('quarantineDone')}：${action === 'expire' ? `${payload.expired ?? 0}` : `${payload.removed ?? 0}`}`)
+          await refreshFeed()
+        } catch (error) {
+          setQuarantineMessage(`${t('quarantineFailed')}：${error instanceof Error ? error.message : String(error)}`)
+        } finally {
+          setQuarantineBusy(false)
+        }
+      }, [quarantineBusy, quarantineConfirm, t])
 
       draftRef.current = draft
       viewRef.current = view
@@ -2897,6 +3000,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
         h('style', { key: 'dsh-vigil-css' }, CSS),
         h('h2', { className: 'dsh-vigil-heading' }, t('title')),
         h('p', { className: 'dsh-vigil-intro' }, t('intro')),
+        h('p', { className: 'dsh-vigil-statusline', role: 'status' }, statusLine),
         h('div', { className: 'dsh-vigil-topbar' },
           h('div', { className: 'dsh-vigil-topbar-row' },
             h('span', { className: 'dsh-vigil-topbar-label' }, t('labelLocale')),
@@ -2934,7 +3038,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
           const bodyDisabled = monitorDisabled || (masterOff && group.titleKey !== 'modeSection')
           const detailFields = (master ? group.fields.filter(field => field !== master) : group.fields)
             .filter(field => field.path !== 'locale')
-          const hasActions = group.titleKey === 'auditSection' || group.titleKey === 'sageSection'
+          const hasActions = group.titleKey === 'auditSection' || group.titleKey === 'sageSection' || group.titleKey === 'quarantineSection'
           const expandable = detailFields.length > 0 || hasActions
           const masterNode = master
             ? h('span', {
@@ -2964,6 +3068,23 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
                   ? h('p', { className: 'dsh-vigil-row-description dsh-vigil-group-note' }, t('monitorGroupDisabled'))
                   : null,
               ...detailFields.map(field => h(FieldRow, { key: field.path, field, draft, t, disabled: bodyDisabled, onChange })),
+              group.titleKey === 'quarantineSection'
+                ? h('div', { className: 'dsh-vigil-audit-clear-row' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dsh-vigil-button',
+                    disabled: quarantineBusy,
+                    onClick: () => runQuarantine('expire'),
+                  }, t('quarantineExpire')),
+                  h('button', {
+                    type: 'button',
+                    className: quarantineConfirm ? 'dsh-vigil-button dsh-vigil-button-danger' : 'dsh-vigil-button',
+                    disabled: quarantineBusy,
+                    onClick: () => runQuarantine('purge-all'),
+                  }, quarantineConfirm ? t('quarantineConfirmPurge') : t('quarantinePurge')),
+                  quarantineMessage ? h('span', { className: 'dsh-vigil-meta', role: 'status' }, quarantineMessage) : null,
+                )
+                : null,
               group.titleKey === 'auditSection'
                 ? h('div', { className: 'dsh-vigil-audit-clear-row' },
                   h('button', {
@@ -3091,6 +3212,7 @@ const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
 .dsh-vigil-section { display: flex; flex-direction: column; gap: 12px; max-width: 760px; color: var(--dsw-alias-label-primary); }
 .dsh-vigil-heading { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; }
 .dsh-vigil-intro { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
+.dsh-vigil-statusline { margin: 8px 0 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); }
 .dsh-vigil-update-card { box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2)); }
 .dsh-vigil-update-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .dsh-vigil-update-title { font-size: 13px; line-height: 19px; font-weight: 500; color: var(--dsw-alias-label-primary); }

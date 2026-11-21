@@ -1223,13 +1223,38 @@ function producerInfo(command, args) {
 }
 
 /**
+ * Redirect targets a `>` would truncate. `>>` appends; `/dev/null` and
+ * `/dev/stdout` are not real files.
+ * @param {Array<object>} tokens
+ * @returns {Array<object>}
+ */
+function collectTruncateRedirects(tokens) {
+  const targets = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token.op || !/^[0-9]?>$/.test(token.value)) continue;
+    const next = tokens[i + 1];
+    if (!next || next.op) continue;
+    const value = String(next.value ?? '').trim();
+    if (value === '' || /^\/dev\/(?:null|stdout|stderr)$/.test(value)) continue;
+    targets.push(next);
+  }
+  return targets;
+}
+
+/** Commands whose own delete handling must win over redirect truncation. */
+const POSIX_DELETE_WORDS = new Set(['rm', 'unlink', 'rmdir', 'rd', 'find', 'shred', 'srm', 'trash', 'trash-put'])
+
+/**
  * Parse one pipeline stage into a partial statement plus producer info.
  * @param {string} stageText
  * @param {number} depth
  * @returns {{partial: object, producer: object|null}}
  */
 function parseStage(stageText, depth) {
-  const tokens = stripRedirections(tokenizePosix(stageText));
+  const rawTokens = tokenizePosix(stageText);
+  const redirTargets = collectTruncateRedirects(rawTokens);
+  const tokens = stripRedirections(rawTokens);
   let index = 0;
   while (index < tokens.length) {
     const value = tokens[index].value;
@@ -1257,6 +1282,21 @@ function parseStage(stageText, depth) {
   }
   const args = tokens.slice(argStart);
   const producer = producerInfo(command, args);
+
+  // `command > file` truncates `file`; `>>` only appends, `/dev/null` is not a file.
+  if (redirTargets.length > 0 && !POSIX_DELETE_WORDS.has(command)) {
+    return {
+      partial: makePartial({
+        text: stageText.trim(),
+        command: 'redirect',
+        isDelete: true,
+        deleteKind: 'truncate',
+        notes: ['重定向符号 > 会截断目标文件（>> 只追加）'],
+        rawTargets: redirTargets.map(token => targetFromToken(token)),
+      }),
+      producer: null,
+    };
+  }
 
   if (COMPOUND_WORDS.has(command)) {
     return {

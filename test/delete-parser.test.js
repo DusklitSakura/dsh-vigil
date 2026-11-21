@@ -20,6 +20,7 @@ const INTENT_KEYS = [
   'force',
   'wildcard',
   'destructive',
+  'deleteKind',
   'targets',
   'statements',
   'reasons',
@@ -913,7 +914,9 @@ test('protected-path signal', () => {
 test('unresolvable relative target without cwd stays unparsed-safe', () => {
   const intent = parse('rm -rf some/dir');
   assert.equal(intent.isDelete, true);
-  assert.equal(intent.unparsed, false);
+  // No usable working directory: the target cannot be resolved, so the intent
+  // must be reported as unparsed and end up as a question, not a silent allow.
+  assert.equal(intent.unparsed, true);
   assert.equal(intent.targets[0].resolvedPath, null);
   assert.equal(intent.targets[0].scope, 'literal');
   assert.equal(intent.targets[0].absolute, false);

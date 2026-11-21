@@ -5,7 +5,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -51,11 +51,7 @@ import {
   writeInstallManifest,
 } from '../src/sage-provision.js'
 import { atomicWriteJson, formatBytes, isWithin, pathKey, sha256 } from '../src/util.js'
-
-/** @returns {string} an isolated temp directory */
-function tempDir(prefix = 'vigil-test-') {
-  return mkdtempSync(join(tmpdir(), prefix))
-}
+import { tempDir } from './temp.js'
 
 /**
  * Resolve a config against an isolated DSH_HOME so tests never touch real state.
@@ -267,6 +263,10 @@ test('audit feed: projects decisions, counts and Sage attribution for the Chat d
   assert.equal(feed.installAudits[0].name, 'evil-plugin')
   assert.match(feed.installScan.description, /evil-plugin/)
   assert.equal(feed.audit.count, 3)
+  // Read-only status card fields for the Settings page.
+  assert.equal(typeof feed.integrity.describe, 'string')
+  assert.equal(typeof feed.rules.sources, 'number')
+  assert.ok(Array.isArray(feed.rules.warnings))
   const denied = feed.decisions[0]
   assert.equal(denied.sage.threatId, 'CLT-CMD-006')
   assert.match(denied.sage.attribution, /Sage/)
@@ -1083,7 +1083,7 @@ test('sentinel: session "always allow" auto-allows ask decisions without a promp
 })
 
 test('audit log: decision records keep in-conversation approval metadata', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-audit-approval-'))
+  const dir = tempDir('vigil-audit-approval-')
   try {
     const { config } = testConfig()
     config.paths.auditDir = dir
@@ -1106,7 +1106,7 @@ test('audit log: decision records keep in-conversation approval metadata', () =>
 })
 
 test('audit log: session clear/archive/restore/remove keep a verifiable chain', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-audit-lifecycle-'))
+  const dir = tempDir('vigil-audit-lifecycle-')
   try {
     const { config } = testConfig()
     config.paths.auditDir = dir
@@ -1155,7 +1155,7 @@ test('audit log: session clear/archive/restore/remove keep a verifiable chain', 
 })
 
 test('audit log: a stale process-global sink is replaced on a schema revision bump', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-sink-'))
+  const dir = tempDir('vigil-sink-')
   const sinks = globalThis[Symbol.for('dsh-vigil.audit-sinks')]
   try {
     const { config } = testConfig()
@@ -1207,7 +1207,7 @@ test('sentinel: self-protection ask parks the call with the command text', async
 
 test('install scan: local specs resolve to a scannable directory, registry specs do not', async () => {
   const { resolveLocalInstallTarget, summarizeInstallScan } = await import('../src/audit/install-scan.js')
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-install-scan-'))
+  const dir = tempDir('vigil-install-scan-')
   try {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'local-plugin', version: '1.0.0' }))
     const target = resolveLocalInstallTarget({ action: 'install_bundle', spec: dir }, { cwd: process.cwd() })
@@ -1246,7 +1246,7 @@ test('install scan: local specs resolve to a scannable directory, registry specs
 
 test('install watcher: baselines profiles, scans only newly added bundles and records an audit entry', async () => {
   const { createInstallWatcher } = await import('../src/install-watch.js')
-  const root = mkdtempSync(join(tmpdir(), 'vigil-install-watch-'))
+  const root = tempDir('vigil-install-watch-')
   try {
     const dshHome = join(root, '.dsh')
     const profileDir = join(dshHome, 'profiles', 'desktop')
@@ -1283,7 +1283,8 @@ test('install watcher: baselines profiles, scans only newly added bundles and re
     assert.match(scans[0], /evil-plugin/)
     assert.equal(records.length, 1)
     assert.equal(records[0].event, 'install-scan')
-    assert.equal(records[0].decision, 'ask')
+    // Post-install scans are observations, not decisions: nothing was asked.
+    assert.equal(records[0].decision, 'none')
     assert.match(records[0].reason, /evil-plugin@2\.3\.4/)
     assert.match(watcher.describe(), /evil-plugin@2\.3\.4/)
 
@@ -1344,7 +1345,7 @@ test('install scan route: re-scans one package or all installed packages', async
 })
 
 test('sage action route: uninstall removes the provisioned tree and rejects unknown actions', async () => {
-  const stateDir = mkdtempSync(join(tmpdir(), 'vigil-sage-action-'))
+  const stateDir = tempDir('vigil-sage-action-')
   try {
     const sageDir = join(stateDir, 'sage')
     mkdirSync(join(sageDir, 'node_modules'), { recursive: true })
@@ -1427,7 +1428,7 @@ test('quarantine route: expire and confirmed purge-all answer with a fresh snaps
 
 test('sentinel: a local plugin install is statically audited before the tool runs', async () => {
   const { createInterceptor } = await import('../src/sentinel/hook.js')
-  const pluginDir = mkdtempSync(join(tmpdir(), 'vigil-install-hook-'))
+  const pluginDir = tempDir('vigil-install-hook-')
   try {
     writeFileSync(join(pluginDir, 'package.json'), JSON.stringify({ name: 'local-plugin', version: '1.0.0' }))
     const auditRecords = []
@@ -1642,7 +1643,7 @@ test('update check: semver tags, remotes, peeled commits and install kind', asyn
   assert.equal(latest?.sha, 'd'.repeat(40))
   assert.equal(pickLatestTag(stdout, '0.0.10'), null, 'no version newer than the running one')
 
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-vigil-update-'))
+  const dir = tempDir('dsh-vigil-update-')
   try {
     const route = createUpdateCheckRoute({ pluginDir: dir, currentVersion: '0.0.1' })
     const response = await route.fetch(new Request('http://127.0.0.1/api/dsh-vigil/update-check'))

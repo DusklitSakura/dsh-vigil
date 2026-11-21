@@ -85,6 +85,13 @@ export const DEFAULT_CONFIG = Object.freeze({
     extraCriticalRoots: [],
     extraHighRoots: [],
     includeProjectRootAsHigh: true,
+    /**
+     * Base directory for relative delete targets and the high project root.
+     * Empty means "process.cwd() when it is not inside the Harness home"; the
+     * Desktop app's host process runs from the profile directory, where relative
+     * paths would otherwise be classified as critical Harness state.
+     */
+    projectRoot: '',
     observeScale: true,
   },
   sage: {
@@ -128,9 +135,27 @@ export const DEFAULT_CONFIG = Object.freeze({
     /** Log a scrubbed argument summary; false logs lengths and hashes only. */
     logArguments: true,
     argumentChars: 300,
+    /**
+     * Optional external anchor: an HMAC over the chain head, written every
+     * `everyN` records, so a full rewrite of the local chain can be detected.
+     * The key is read from the environment (`keyEnv`), never from the log dir.
+     */
+    anchor: {
+      enabled: false,
+      keyEnv: 'DSH_VIGIL_ANCHOR_KEY',
+      everyN: 100,
+    },
   },
   tools: {
     enabled: true,
+  },
+  /**
+   * External rule packs (YAML). Empty means `<DSH_HOME>/vigil/rules`; files there
+   * are applied on top of the shipped pack, so threat data can be updated
+   * without a plugin release.
+   */
+  rules: {
+    dir: '',
   },
   /** Decision for calls that would delete/move the plugin or its state. */
   selfProtection: 'deny',
@@ -212,6 +237,10 @@ export function resolveConfig(raw) {
   if (!isPlainObject(config.deleteGuard.thresholds)) {
     warnings.push('deleteGuard.thresholds 必须是对象；已回退到默认值')
     config.deleteGuard.thresholds = cloneDefault(DEFAULT_CONFIG.deleteGuard.thresholds)
+  }
+  if (!isPlainObject(config.auditLog.anchor)) {
+    warnings.push('auditLog.anchor 必须是对象；已回退到默认值')
+    config.auditLog.anchor = cloneDefault(DEFAULT_CONFIG.auditLog.anchor)
   }
 
   if (config.mode !== 'enforce' && config.mode !== 'monitor') {
@@ -314,6 +343,7 @@ function validateIntegers(config, warnings) {
     [config.auditLog, 'maxBytes', 4096, DEFAULT_CONFIG.auditLog.maxBytes],
     [config.auditLog, 'maxFiles', 1, DEFAULT_CONFIG.auditLog.maxFiles],
     [config.auditLog, 'argumentChars', 16, DEFAULT_CONFIG.auditLog.argumentChars],
+    [config.auditLog.anchor, 'everyN', 1, DEFAULT_CONFIG.auditLog.anchor.everyN],
     [config.notify, 'approvalTimeoutMs', 5000, DEFAULT_CONFIG.notify.approvalTimeoutMs],
     [config.sage, 'timeoutMs', 10, DEFAULT_CONFIG.sage.timeoutMs],
   ]
@@ -336,6 +366,7 @@ function validateIntegers(config, warnings) {
     [config.notify.enabled, 'notify.enabled'],
     [config.notify.includeAsk, 'notify.includeAsk'],
     [config.notify.inlineApproval, 'notify.inlineApproval'],
+    [config.auditLog.anchor.enabled, 'auditLog.anchor.enabled'],
   ]) {
     if (typeof value !== 'boolean') warnings.push(`${label} 必须是布尔值；已按 truthy 处理`)
   }
@@ -346,6 +377,30 @@ function validateIntegers(config, warnings) {
  * @param {string[]} warnings
  */
 function validateStringArrays(config, warnings) {
+  if (!config.auditLog.anchor || typeof config.auditLog.anchor !== 'object') {
+    warnings.push('auditLog.anchor 必须是对象；已重置为默认值')
+    config.auditLog.anchor = { ...DEFAULT_CONFIG.auditLog.anchor }
+  }
+  if (typeof config.auditLog.anchor.keyEnv !== 'string' || config.auditLog.anchor.keyEnv.trim() === '') {
+    warnings.push('auditLog.anchor.keyEnv 不是有效环境变量名；已回退默认')
+    config.auditLog.anchor.keyEnv = DEFAULT_CONFIG.auditLog.anchor.keyEnv
+  }
+  if (!config.rules || typeof config.rules !== 'object') {
+    warnings.push('rules 必须是对象；已重置为默认值')
+    config.rules = { dir: '' }
+  }
+  if (typeof config.rules.dir !== 'string') {
+    warnings.push('rules.dir 必须是字符串；已重置为空')
+    config.rules.dir = ''
+  } else {
+    config.rules.dir = config.rules.dir.trim()
+  }
+  if (typeof config.deleteGuard.projectRoot !== 'string') {
+    warnings.push('deleteGuard.projectRoot 必须是字符串；已重置为空')
+    config.deleteGuard.projectRoot = ''
+  } else {
+    config.deleteGuard.projectRoot = config.deleteGuard.projectRoot.trim()
+  }
   for (const key of ['extraCriticalRoots', 'extraHighRoots']) {
     const value = config.deleteGuard[key]
     if (!Array.isArray(value)) {

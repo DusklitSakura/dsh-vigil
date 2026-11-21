@@ -24,7 +24,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { acquireAuditLog, createAuditLog } from './audit-log.js'
 import { createAuditFeedRoute } from './audit-feed.js'
@@ -53,7 +53,8 @@ import { resolveConfig, killSwitchState } from './config.js'
 import { Config } from './config-schema.js'
 import { configFingerprint, snapshotConfig } from './live-config.js'
 import { registerTools } from './tools.js'
-import { readJson, truncate } from './util.js'
+import { reloadRulePack } from './rules/pack.js'
+import { isWithin, readJson, resolvePath, truncate } from './util.js'
 
 /** Loader-visible plugin name. */
 export const name = 'dsh-vigil'
@@ -136,6 +137,29 @@ function degradedIntegrity(message, version) {
 async function buildRuntime(plain, deps) {
   const { config, warnings } = resolveConfig(plain)
   const { logger, version } = deps
+  // Relative delete targets and the `high` project root need the *workspace*,
+  // not the host process cwd (the Desktop app runs from the profile directory).
+  // An explicit `deleteGuard.projectRoot` wins; otherwise the host cwd is used
+  // only when it is a real workspace, never when it lives inside the Harness
+  // home. Unknown stays unknown so the policy asks instead of guessing.
+  const hostCwd = resolve(deps.hostCwd ?? process.cwd())
+  const configuredRoot = config.deleteGuard.projectRoot
+    ? resolvePath(config.deleteGuard.projectRoot, hostCwd)
+    : ''
+  const baseCwd = configuredRoot || (isWithin(config.paths.dshHome, hostCwd) ? '' : hostCwd)
+  // Rule data (credential paths, secret shapes, egress APIs, …) lives in YAML
+  // packs so it can be updated without shipping a plugin release. The shipped
+  // pack is read from the package; `rules.dir` overrides it on top.
+  let rulePack = null
+  try {
+    const externalDir = config.rules.dir
+      ? resolvePath(config.rules.dir, config.paths.stateDir)
+      : join(config.paths.stateDir, 'rules')
+    rulePack = reloadRulePack({ externalDir, lockPath: join(config.paths.stateDir, 'rules-lock.json'), logger })
+    for (const warning of rulePack.warnings) warnings.push(`规则包：${warning}`)
+  } catch (error) {
+    logger.warn(`[dsh-vigil] 规则包加载失败，继续使用内置规则：${String(error)}`)
+  }
   // One sink per log directory per process: rebuilds and HMR replacements must
   // not race two chain heads over the same JSONL file.
   const audit = typeof deps.acquireAudit === 'function' ? deps.acquireAudit(config, logger) : createAuditLog(config, logger)
@@ -149,7 +173,7 @@ async function buildRuntime(plain, deps) {
     quarantine = createQuarantine({ ...config, quarantine: { ...config.quarantine, enabled: false } }, logger)
   }
 
-  const policy = createDeletePolicy(config, { quarantine, logger })
+  const policy = createDeletePolicy(config, { quarantine, logger, cwd: baseCwd })
 
   /** @type {any} */
   let integrity
@@ -197,7 +221,7 @@ async function buildRuntime(plain, deps) {
     approval: deps.approval ?? null,
     logger,
     isDisabled: deps.isDisabled,
-    cwd: deps.cwd,
+    cwd: baseCwd,
     pluginDir: deps.pluginDir,
   })
   const guard = createSelfGuard({
@@ -210,6 +234,8 @@ async function buildRuntime(plain, deps) {
   return {
     config,
     warnings,
+    baseCwd,
+    rulePack,
     audit,
     quarantine,
     policy,
@@ -230,7 +256,7 @@ async function buildRuntime(plain, deps) {
 export async function apply(ctx, config) {
   const logger = createLogger()
   const version = packageVersion()
-  const cwd = process.cwd()
+  const hostCwd = process.cwd()
   const entryId = readEntryId(ctx)
   const packageManager = readPackageManager(ctx)
 
@@ -248,6 +274,18 @@ export async function apply(ctx, config) {
   let sageUpdateState = { state: 'idle', latestVersion: null, checkedAt: null, error: null, updateAvailable: null, updatedTo: null }
   /** @type {Array<() => void>} */
   const disposers = []
+  /** Authenticated browser routes and whether each one registered. */
+  const ROUTE_LABELS = [
+    '审计数据路由',
+    '审计清理路由',
+    'Sage 维护路由',
+    '对话内审批路由',
+    '隔离区路由',
+    '手动插件扫描路由',
+    '插件更新检查路由',
+  ]
+  /** @type {Map<string, string>} */
+  const routeStatus = new Map(ROUTE_LABELS.map(label => [label, 'pending']))
 
   const snapshot = () => snapshotConfig(config)
   const isDisabled = () => Boolean(runtime) && killSwitchState(runtime.config, { existsSync }).active
@@ -296,7 +334,7 @@ export async function apply(ctx, config) {
     }
     refreshing = (async () => {
       try {
-        const next = await buildRuntime(snapshot(), { logger, version, isDisabled, acquireAudit, approval: approvalQueue, pluginDir: PLUGIN_DIR, cwd })
+        const next = await buildRuntime(snapshot(), { logger, version, isDisabled, acquireAudit, approval: approvalQueue, pluginDir: PLUGIN_DIR, hostCwd })
         const previous = runtime
         runtime = next
         // The registered wrappers outlive a generation: re-tag them so the new
@@ -587,7 +625,7 @@ export async function apply(ctx, config) {
   }
 
   // Initial generation. It must exist before the wrappers below can run.
-  runtime = await buildRuntime(snapshot(), { logger, version, isDisabled, acquireAudit, approval: approvalQueue, pluginDir: PLUGIN_DIR, cwd })
+  runtime = await buildRuntime(snapshot(), { logger, version, isDisabled, acquireAudit, approval: approvalQueue, pluginDir: PLUGIN_DIR, hostCwd })
 
   const hookWrapper = async (exec, next) => {
     ensureFresh()
@@ -663,7 +701,9 @@ export async function apply(ctx, config) {
           lastError: installWatcher.lastError,
           recent: installWatcher.list().slice(-3),
         }),
-        cwd,
+        getApproval: () => approvalQueue,
+        getCwd: () => runtime.baseCwd,
+        getRoutes: () => Object.fromEntries(routeStatus),
       }))
     } catch (error) {
       logger.warn(`[dsh-vigil] 无法注册 vigil_* 工具：${String(error)}`)
@@ -676,6 +716,7 @@ export async function apply(ctx, config) {
   try {
     const registerBrowserRoutes = connection => {
       if (!connection || !connection.fetch || typeof connection.fetch.register !== 'function') {
+        for (const label of ROUTE_LABELS) routeStatus.set(label, 'no-connection')
         logger.warn('[dsh-vigil] 当前宿主没有 connection.fetch，对话内审计与审批界面将不可用')
         return undefined
       }
@@ -693,9 +734,11 @@ export async function apply(ctx, config) {
           if (disposed || stop) return
           try {
             stop = connection.fetch.register(route)
+            routeStatus.set(label, 'ok')
           } catch (error) {
             attempts += 1
             if (attempts >= 12) {
+              routeStatus.set(label, `failed: ${error instanceof Error ? error.message : String(error)}`)
               logger.warn(`[dsh-vigil] ${label}注册失败：${String(error)}`)
               return
             }
@@ -717,7 +760,7 @@ export async function apply(ctx, config) {
         registerRoute(createAuditFeedRoute({
           getRuntime: () => runtime,
           isDisabled,
-          limit: 40,
+          limit: 300,
           approval: approvalQueue,
           installWatcher,
         }), '审计数据路由'),
@@ -815,6 +858,35 @@ export async function apply(ctx, config) {
     disposers.push(() => clearInterval(updateTimer))
   } catch (error) {
     logger.warn(`[dsh-vigil] 无法启动 Sage 自动更新检查：${String(error)}`)
+  }
+
+  // Quarantine housekeeping: expired entries are deleted on activation and every
+  // six hours, so a blocked deletion does not accumulate forever when nobody
+  // opens the audit dialog.
+  const expireQuarantine = () => {
+    try {
+      const result = runtime.quarantine.expire()
+      if (Array.isArray(result?.expired) && result.expired.length > 0) {
+        runtime.audit.record({
+          kind: 'quarantine',
+          event: 'expire',
+          tool: null,
+          decision: 'none',
+          ruleIds: [],
+          reason: `自动清理过期隔离条目 ${result.expired.length} 个`,
+        })
+      }
+    } catch {
+      // housekeeping must never break activation or the hook path
+    }
+  }
+  expireQuarantine()
+  try {
+    const expireTimer = setInterval(expireQuarantine, 6 * 3600 * 1000)
+    if (typeof expireTimer.unref === 'function') expireTimer.unref()
+    disposers.push(() => clearInterval(expireTimer))
+  } catch (error) {
+    logger.warn(`[dsh-vigil] 无法启动隔离区清理定时器：${String(error)}`)
   }
 
   // ---- activation record ----------------------------------------------

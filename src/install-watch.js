@@ -62,6 +62,8 @@ export function createInstallWatcher(options = {}) {
   let lastCheckAt = null
   /** @type {string|null} */
   let lastError = null
+  /** Progress of the scan currently running (background scans must be visible). */
+  const scanState = { analyzing: null, scanned: 0, startedAt: null, finishedAt: null, packages: 0 }
 
   function profileDirs() {
     try {
@@ -122,12 +124,29 @@ export function createInstallWatcher(options = {}) {
     const located = locateInstalled(entry.profileDir, entry.name)
     if (!located) return null
     let report
+    scanState.analyzing = entry.name
+    scanState.scanned = 0
+    scanState.startedAt = new Date().toISOString()
+    scanState.finishedAt = null
+    scanState.packages = 0
     try {
-      report = await scan(located.dir, { includeInfo: false, maxFiles: 400 })
+      report = await scan(located.dir, {
+        includeInfo: false,
+        maxFiles: 400,
+        // Cooperative scanning: the scanner yields to the event loop every 25
+        // files, so a big package never freezes the Host while it is analysed.
+        onProgress: () => {
+          scanState.scanned += 1
+        },
+      })
     } catch (error) {
       lastError = `安装审计失败：${entry.name}: ${error instanceof Error ? error.message : String(error)}`
       logger?.warn?.(`[dsh-vigil] ${lastError}`)
       return null
+    } finally {
+      scanState.analyzing = null
+      scanState.finishedAt = new Date().toISOString()
+      scanState.packages += 1
     }
     const summary = summarizeInstallScan(report, { target: entry.name, dir: located.dir })
     const auditEntry = {
@@ -152,7 +171,9 @@ export function createInstallWatcher(options = {}) {
         kind: 'event',
         event: 'install-scan',
         tool: 'plugin_manager',
-        decision: summary.blockers > 0 ? 'ask' : 'none',
+        // A post-install/manual scan is an observation, not a decision: nothing
+        // was asked, so recording `ask` would pollute the "询问" counters.
+        decision: 'none',
         ruleIds: auditEntry.ruleIds,
         reason: `${entry.name}${located.version ? `@${located.version}` : ''}${scanReason === 'update' ? '（更新）' : scanReason === 'manual' ? '（手动重扫）' : ''} ${summary.text}`,
         extra: {
@@ -277,7 +298,13 @@ export function createInstallWatcher(options = {}) {
     get baselineReady() {
       return seen !== null
     },
+    get state() {
+      return { ...scanState }
+    },
     describe() {
+      if (scanState.analyzing) {
+        return `安装审计：正在扫描 ${scanState.analyzing}（已读 ${scanState.scanned} 个文件）`
+      }
       const last = audits[audits.length - 1]
       if (!last) return `安装审计：等待新插件（检查于 ${lastCheckAt ?? '尚未检查'}）`
       const reason = last.scanReason === 'update' ? '更新后' : last.scanReason === 'manual' ? '手动重扫' : '安装后'

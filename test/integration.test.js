@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { tempDir } from './temp.js'
 
 import { apply } from '../src/index.js'
 import { createAuditLog } from '../src/audit-log.js'
@@ -63,7 +64,7 @@ function fakeCtx() {
  * @returns {{ root: string, dshHome: string, restore: () => void }}
  */
 function isolatedHome(rawConfig = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'vigil-int-'))
+  const root = tempDir('vigil-int-')
   const dshHome = join(root, '.dsh')
   const previous = process.env.DSH_HOME
   process.env.DSH_HOME = dshHome
@@ -81,13 +82,20 @@ test('apply: registers the waterfall, the monotonic guard, the tools and state',
   const home = isolatedHome()
   try {
     const { config } = resolveConfig({ auditLog: { logArguments: true } })
-    const { ctx, listeners, guards, tools } = fakeCtx()
+    const { ctx, listeners, guards, tools, services } = fakeCtx()
+    // The doctor checks every browser route; give it the same fake channel the
+    // route test uses so the check is exercised rather than skipped.
+    services.set('connection', { fetch: { register: () => () => {} } })
     await apply(ctx, {})
     assert.equal(typeof listeners.get('tools/pre-execute'), 'function')
     assert.equal(guards.length, 1)
-    for (const name of ['vigil_scan', 'vigil_status', 'vigil_quarantine', 'vigil_audit', 'vigil_integrity', 'vigil_sage']) {
+    for (const name of ['vigil_scan', 'vigil_status', 'vigil_quarantine', 'vigil_audit', 'vigil_integrity', 'vigil_sage', 'vigil_doctor']) {
       assert.ok(tools.has(name), `missing tool ${name}`)
     }
+    const doctor = await tools.get('vigil_doctor').execute({}, {})
+    assert.equal(typeof doctor.card, 'string')
+    assert.ok(Array.isArray(doctor.checks) && doctor.checks.length >= 10, 'doctor must report every subsystem')
+    assert.equal(doctor.ok, true, doctor.card)
     assert.ok(existsSync(join(config.paths.auditDir, 'audit-000001.jsonl')))
     assert.ok(existsSync(config.paths.baselineFile), 'integrity baseline should be written at activation')
     assert.ok(existsSync(config.paths.canaryFile), 'canary file should be written at activation')

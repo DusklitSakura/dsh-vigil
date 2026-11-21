@@ -559,6 +559,26 @@ function tokenizePwsh(src) {
 }
 
 /**
+ * Redirect targets a `>` (or `2>`) would truncate. `>>` appends, `> $null` and
+ * `> NUL` discard output, so none of them are destructive.
+ * @param {Array<object>} tokens
+ * @returns {Array<object>} target tokens
+ */
+function collectTruncateRedirects(tokens) {
+  const targets = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token.op || !/^[0-9]?>$/.test(token.value)) continue;
+    const next = tokens[i + 1];
+    if (!next || next.op) continue;
+    const value = unmask(next.value ?? '').trim();
+    if (value === '' || /^\$null$/i.test(value) || /^nul$/i.test(value)) continue;
+    targets.push(next);
+  }
+  return targets;
+}
+
+/**
  * Drop redirection operators and their targets from a token list.
  * @param {Array<object>} tokens
  * @returns {Array<object>}
@@ -699,7 +719,7 @@ function maskPwshStrings(src) {
  */
 function detectDotNetDelete(stageText) {
   const match = /\[\s*(?:System\.)?([A-Za-z0-9_.]+)\s*\]\s*::\s*Delete\s*\(/i.exec(stageText);
-  if (!match) return null;
+  if (!match) return detectInstanceDelete(stageText);
   const className = match[1];
   const direct = /^\s*[\[(]/.test(stageText) && match.index <= stageText.length - stageText.trimStart().length + 2;
   if (!direct) {
@@ -762,6 +782,106 @@ function detectDotNetDelete(stageText) {
 }
 
 /**
+ * Detect an instance-method `.Delete(...)` call:
+ *
+ *   `[System.IO.DirectoryInfo]::new("path").Delete($true)`
+ *   `(New-Object System.IO.DirectoryInfo "path").Delete()`
+ *   `$di.Delete($true)`                      → unparsed (target unknown)
+ *
+ * The static `[Type]::Delete(...)` form is handled above; this is the equally
+ * common instance form, which used to fall through to "not a delete".
+ * @param {string} stageText
+ * @returns {object|null}
+ */
+function detectInstanceDelete(stageText) {
+  const call = /\.\s*Delete\s*\(/i.exec(stageText);
+  if (!call) return null;
+  const head = stageText.slice(0, call.index);
+  const typeMatch = /\[\s*(?:System\.)?([A-Za-z0-9_.]+)\s*\]/i.exec(head);
+  const className = typeMatch ? typeMatch[1] : '';
+  const literal = /::\s*new\s*\(\s*(['"])([\s\S]*?)\1/i.exec(head)
+    || /New-Object\s+(?:-TypeName\s+)?['"]?(?:System\.)?[A-Za-z0-9_.]+['"]?\s+(['"])([\s\S]*?)\1/i.exec(head);
+  const open = call.index + call[0].length - 1;
+  const close = findMatching(stageText, open, '(', ')');
+  const argsText = close > open ? stageText.slice(open + 1, close) : '';
+  const literalClass = className.toLowerCase();
+  const recursive = literalClass.includes('directory') ? /(?:^|[\s,;(])\$true\b/i.test(argsText) : false;
+
+  if (!literal) {
+    return makePartial({
+      text: stageText.trim(),
+      command: (literalClass || 'object') + '.delete()',
+      isDelete: true,
+      recursive,
+      deleteKind: 'io-delete',
+      unparsed: true,
+      notes: ['检测到 .NET 实例 Delete() 调用，目标无法静态解析'],
+      risks: ['unknown-construct'],
+    });
+  }
+  const tokens = tokenizePwsh(literal[2]);
+  if (tokens.length === 0) {
+    return makePartial({
+      text: stageText.trim(),
+      command: (literalClass || 'object') + '.delete()',
+      isDelete: true,
+      recursive,
+      deleteKind: 'io-delete',
+      unparsed: true,
+      notes: ['检测到 .NET 实例 Delete() 调用，但目标参数为空'],
+      risks: ['unknown-construct'],
+    });
+  }
+  const notes = ['.NET 实例 Delete() 调用'];
+  if (recursive) notes.push('DirectoryInfo.Delete(..., true) 递归删除目录');
+  return makePartial({
+    text: stageText.trim(),
+    command: (literalClass || 'object') + '.delete()',
+    isDelete: true,
+    recursive,
+    deleteKind: 'io-delete',
+    notes,
+    rawTargets: [psTarget(tokens[0], true, { note: '.NET 实例 Delete() 删除目标' })],
+  });
+}
+
+/**
+ * Parse a truncating write (`Clear-Content`, `Set-Content`, `Out-File`).
+ *
+ * The file is emptied/overwritten, which is destructive for the old content but
+ * is not a `Remove-Item`; reuse the Remove-Item target parser after dropping the
+ * data parameters (`-Value`, `-InputObject`) so their payload is not mistaken
+ * for a path.
+ *
+ * @param {string} command normalized command name
+ * @param {Array<object>} args tokens after the command word
+ * @param {string} text stage text
+ * @returns {object} partial statement
+ */
+function parseTruncate(command, args, text) {
+  /** @type {Array<object>} */
+  const targetArgs = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const value = unmask(args[i].value ?? '');
+    if (/^-(?:value|inputobject)(?::|$)/i.test(value)) {
+      if (!value.includes(':') && i + 1 < args.length) i += 1;
+      continue;
+    }
+    targetArgs.push(args[i]);
+  }
+  const partial = parseRemoveItem(targetArgs, text);
+  partial.command = command;
+  partial.deleteKind = 'truncate';
+  partial.notes = [...(partial.notes ?? []), '该命令会清空或覆盖文件原有内容（截断写入）'];
+  if (!partial.isDelete) {
+    partial.isDelete = true;
+    partial.unparsed = true;
+    partial.risks = [...new Set([...(partial.risks ?? []), 'unknown-construct'])];
+  }
+  return partial;
+}
+
+/**
  * Parse `Remove-Item` parameters / positional targets.
  * @param {Array<object>} args tokens after the command word
  * @param {string} text stage text
@@ -793,6 +913,16 @@ function parseRemoveItem(args, text) {
     }
     const param = parseParamName(value);
     if (!param) {
+      // `rm -rf` is a POSIX habit that PowerShell itself rejects; treat the
+      // combined flags as -Recurse -Force so the call still gets the recursive
+      // decision instead of slipping through as a single-file delete.
+      if (/^-[rR][fF]$|^-[fF][rR]$/.test(value)) {
+        recursive = true;
+        force = true;
+        notes.push('将 -rf 视为 -Recurse -Force（PowerShell 不接受组合短选项）');
+        i += 1;
+        continue;
+      }
       if (value.startsWith('-') && value.length > 1) {
         notes.push('未识别的参数 ' + value);
         i += 1;
@@ -803,6 +933,17 @@ function parseRemoveItem(args, text) {
       continue;
     }
     const resolved = resolveDeleteParam(param.name);
+    if (!resolved) {
+      // `rm -rf`: parseParamName sees the name "rf", which no Remove-Item
+      // parameter starts with. Read the habitual pair as -Recurse -Force.
+      if (param.name === 'rf' || param.name === 'fr') {
+        recursive = true;
+        force = true;
+        notes.push('将 -rf 视为 -Recurse -Force（PowerShell 不接受组合短选项）');
+      }
+      i += 1;
+      continue;
+    }
     if (resolved === 'path' || resolved === 'literalpath') {
       const literal = resolved === 'literalpath';
       if (param.inline !== undefined) {
@@ -960,7 +1101,9 @@ function parsePwshStage(stageText, depth) {
   const dotnet = detectDotNetDelete(stageText);
   if (dotnet) return { partial: dotnet, producer: null };
 
-  const tokens = stripRedirects(tokenizePwsh(stageText));
+  const rawTokens = tokenizePwsh(stageText);
+  const redirTargets = collectTruncateRedirects(rawTokens);
+  const tokens = stripRedirects(rawTokens);
   let index = 0;
   while (index < tokens.length) {
     const value = tokens[index].value;
@@ -982,8 +1125,31 @@ function parsePwshStage(stageText, depth) {
   const args = tokens.slice(index + 1);
   const stage = stageText.trim();
 
+  // `command > file` truncates `file` before the command even runs. `>>` only
+  // appends; `> $null` / `> NUL` discard output and touch no file.
+  const deleteOrTruncate = command === 'remove-item' || command === 'clear-content'
+    || command === 'set-content' || command === 'out-file' || command === 'invoke-expression';
+  if (redirTargets.length > 0 && !deleteOrTruncate) {
+    return {
+      partial: makePartial({
+        text: stage,
+        command: 'redirect',
+        isDelete: true,
+        deleteKind: 'truncate',
+        notes: ['重定向符号 > 会截断目标文件（>> 只追加）'],
+        rawTargets: redirTargets.map(token => psTarget(token, false)),
+      }),
+      producer: null,
+    };
+  }
+
   if (command === 'remove-item') {
     return { partial: parseRemoveItem(args, stage), producer: null };
+  }
+  // Truncating writes destroy the old content just like a delete, but they are
+  // not `Remove-Item`; without this they were silently allowed on any file.
+  if (command === 'clear-content' || command === 'set-content' || command === 'out-file') {
+    return { partial: parseTruncate(command, args, stage), producer: null };
   }
   if (command === 'invoke-expression') {
     return {
@@ -1011,9 +1177,9 @@ function parsePwshStage(stageText, depth) {
   // Script blocks / nested pipelines that contain a delete call
   // (`foreach ($d in $dirs) { Remove-Item ... $d }`, `... | ForEach-Object { ... }`).
   const masked = maskPwshStrings(stage);
-  const looksLikeDelete = /(?:^|[\s{|;])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)\b/i.test(masked) || /::\s*Delete\s*\(/i.test(masked);
+  const looksLikeDelete = /(?:^|[\s{|;])(?:Remove-Item|ri|rm|del|erase|rd|rmdir)\b/i.test(masked) || /(?:^|::)\.?\s*Delete\s*\(/i.test(stage) || /\.\s*Delete\s*\(/i.test(stage);
   if (looksLikeDelete && /[{|]/.test(masked)) {
-    const ioDelete = /::\s*Delete\s*\(/i.test(masked);
+    const ioDelete = /\.\s*Delete\s*\(\s*\)?/i.test(masked) || /::\s*Delete\s*\(/i.test(masked);
     const recursive = /(?:^|[\s{|;])-recurse\b/i.test(masked);
     const force = /(?:^|[\s{|;])-force\b/i.test(masked);
     let variableName = null;

@@ -11,9 +11,9 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 
 /** @returns {string} the OS user's home directory. */
 export function getHomeDir() {
@@ -44,6 +44,9 @@ export function expandPath(value) {
   if (out.startsWith('~/') || out.startsWith('~\\')) out = join(getHomeDir(), out.slice(2))
   out = out.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (match, name) => process.env[name] ?? match)
   out = out.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name) => process.env[name] ?? match)
+  // PowerShell's $env:NAME — agents use it constantly, and a path that only
+  // spells the variable this way must still canonicalize to the same location.
+  out = out.replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (match, name) => process.env[name] ?? match)
   const home = getHomeDir()
   out = out.replace(/^\$HOME(?=$|[\\/])/, home)
   return out
@@ -94,6 +97,98 @@ export function isWithin(parent, child) {
  */
 export function toPosixRelative(base, target) {
   return relative(base, target).split(sep).join('/')
+}
+
+/** Cache of canonical forms; keyed by the expanded input, bounded. */
+const CANONICAL_CACHE = new Map()
+const CANONICAL_CACHE_MAX = 1024
+
+/**
+ * Canonical absolute path used for security comparisons.
+ *
+ * The raw string a shell command carries is not a safe identity for a file:
+ * `~`, `%USERPROFILE%`, `$env:USERPROFILE`, 8.3 short names (`PROGRA~1`),
+ * junctions and `\\?\` prefixes can all name the same directory. A protected
+ * root check that compares strings therefore misses exactly the spellings an
+ * agent would use to slip past it. This resolves the nearest existing ancestor
+ * with `realpathSync.native` (which expands 8.3 names and strips device
+ * prefixes) and reappends the non-existent tail.
+ *
+ * Non-absolute input is only normalized, never resolved: the caller decides
+ * what a relative path means.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function canonicalizePath(value) {
+  if (typeof value !== 'string' || value.trim() === '') return ''
+  const expanded = expandPath(value)
+    .replace(/^\\\\\?\\/, '')
+    .replace(/^\\\\\.\\/, '')
+  if (expanded === '') return ''
+  if (!isAbsolute(expanded)) return normalize(expanded)
+  const key = process.platform === 'win32' ? expanded.toLowerCase() : expanded
+  const cached = CANONICAL_CACHE.get(key)
+  if (cached !== undefined) return cached
+  const resolved = realpathWithExistingAncestor(expanded)
+  if (CANONICAL_CACHE.size >= CANONICAL_CACHE_MAX) CANONICAL_CACHE.clear()
+  CANONICAL_CACHE.set(key, resolved)
+  return resolved
+}
+
+/**
+ * @param {string} absolute
+ * @returns {string}
+ */
+function realpathWithExistingAncestor(absolute) {
+  try {
+    return normalize(realpathSync.native(absolute))
+  } catch {
+    // The leaf may not exist yet (a delete target usually does, a write target
+    // often does not): canonicalize the nearest existing ancestor instead.
+  }
+  /** @type {string[]} */
+  const tail = []
+  let head = absolute
+  for (let depth = 0; depth < 16; depth += 1) {
+    const parent = dirname(head)
+    if (parent === head) break
+    tail.unshift(basename(head))
+    head = parent
+    try {
+      return normalize(join(realpathSync.native(head), ...tail))
+    } catch {
+      // keep walking up
+    }
+  }
+  return normalize(absolute)
+}
+
+/**
+ * Whether two path spellings name the same location (case-insensitive on
+ * Windows, 8.3/junction/`~` aware).
+ * @param {string} left
+ * @param {string} right
+ * @returns {boolean}
+ */
+export function samePath(left, right) {
+  const a = canonicalizePath(left)
+  const b = canonicalizePath(right)
+  if (a === '' || b === '') return false
+  return pathKey(a) === pathKey(b)
+}
+
+/**
+ * `isWithin` for path spellings that need canonicalization first.
+ * @param {string} parent
+ * @param {string} child
+ * @returns {boolean}
+ */
+export function isWithinCanonical(parent, child) {
+  const a = canonicalizePath(parent)
+  const b = canonicalizePath(child)
+  if (a === '' || b === '') return false
+  return isWithin(a, b)
 }
 
 /**

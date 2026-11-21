@@ -37,6 +37,7 @@ import {
   RULE_ATTRIBUTION,
   truncateEvidence,
 } from './narrative.js';
+import { getRulePack } from '../rules/pack.js';
 
 /** @typedef {'credential'|'network'|'dynamic-code'|'config-tamper'|'supply-chain'|'dsh-attack'|'unknown'} RuleCategory */
 
@@ -60,6 +61,7 @@ const RULE_DEFS = [
   ['VG-DYN-03', 'dynamic-code', 'blocker', '插件包含下载后立即执行的模式'],
   ['VG-DYN-04', 'dynamic-code', 'review', '插件在运行时动态加载模块'],
   ['VG-DYN-05', 'dynamic-code', 'review', '插件使用 vm 模块执行动态代码'],
+  ['VG-DYN-06', 'dynamic-code', 'review', '编码载荷（base64/hex）解码后含可疑内容'],
   ['VG-CFG-01', 'config-tamper', 'review', '插件会写入 dsh 配置文件/目录'],
   ['VG-CFG-02', 'config-tamper', 'notice', '插件会读取 dsh 配置文件/目录'],
   ['VG-CFG-03', 'config-tamper', 'blocker', '插件改写或声明高风险权限策略'],
@@ -88,6 +90,7 @@ const RULE_DEFS = [
   ['VG-SCAN-01', 'unknown', 'blocker', '目标目录不可读取'],
   ['VG-SCAN-02', 'unknown', 'notice', '文件或目录不可读取'],
   ['VG-SCAN-03', 'unknown', 'info', '扫描因限制跳过了部分内容'],
+  ['VG-SCAN-04', 'unknown', 'review', '入口位于未扫描的构建目录'],
 ];
 
 /** Public rule catalog (id, category, severity, title, attribution). */
@@ -213,6 +216,18 @@ function hasCordisPatchExport(exportsField) {
   return false;
 }
 
+/** `dsh.bundle.patch` accepts a string or an array of strings. */
+function patchSpecs(bundlePatch) {
+  if (typeof bundlePatch === 'string') return bundlePatch.trim() === '' ? [] : [bundlePatch];
+  if (Array.isArray(bundlePatch)) return bundlePatch.filter((item) => typeof item === 'string' && item.trim() !== '');
+  return [];
+}
+
+/** True when the manifest declares at least one patch path. */
+function declaresPatch(bundlePatch) {
+  return patchSpecs(bundlePatch).length > 0;
+}
+
 /** True when a dsh.bundle.patch path escapes the package root. */
 function escapesPackage(patchPath) {
   const normalized = String(patchPath).replace(/\\/g, '/').trim();
@@ -316,8 +331,13 @@ export function scanPackageManifest(context) {
   }
 
   if (!pkg.name || !pkg.version) {
-    const line = findLineNumber(text, /"(?:name|version)"\s*:/);
-    push('VG-SUP-07', line, lineTextAt(text, line) || 'package.json 缺少 name 或 version', {});
+    const missing = [!pkg.name ? 'name' : null, !pkg.version ? 'version' : null].filter(Boolean);
+    // Point at the *missing* field's line when it exists, and never quote an
+    // unrelated line as evidence for "缺少 name/version".
+    const line = findLineNumber(text, new RegExp(`"${missing[0]}"\\s*:`));
+    push('VG-SUP-07', line, lineTextAt(text, line) || `package.json 缺少 ${missing.join(' 与 ')}`, {
+      vars: { fields: missing.join('、') },
+    });
   }
 
   const scripts = pkg.scripts && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts) ? pkg.scripts : {};
@@ -362,21 +382,21 @@ export function scanPackageManifest(context) {
   if (patchExists) {
     if (!pkg.dsh) {
       push('VG-SUP-06', dshLine, lineTextAt(text, dshLine) || 'package.json 未声明 dsh 字段', {});
-    } else if (typeof bundlePatch !== 'string' || !bundlePatch) {
+    } else if (!declaresPatch(bundlePatch)) {
+      // `dsh.bundle.patch` is the path dsh actually loads (string or array);
+      // requiring an `exports` entry as well was a false positive.
       push('VG-SUP-05', dshLine, lineTextAt(text, dshLine) || 'dsh 清单缺少 dsh.bundle.patch', {
         vars: { detail: '缺少 dsh.bundle.patch' },
-      });
-    } else if (!hasCordisPatchExport(pkg.exports)) {
-      push('VG-SUP-05', patchLine, lineTextAt(text, patchLine) || 'exports 缺少 "./cordis.patch.yml"', {
-        vars: { detail: 'exports 缺少 "./cordis.patch.yml"' },
       });
     }
   }
 
-  if (typeof bundlePatch === 'string' && escapesPackage(bundlePatch)) {
-    push('VG-DSH-06', patchLine, lineTextAt(text, patchLine) || `"patch": "${bundlePatch}"`, {
-      vars: { path: bundlePatch },
-    });
+  for (const spec of patchSpecs(bundlePatch)) {
+    if (!escapesPackage(spec)) continue
+    push('VG-DSH-06', patchLine, lineTextAt(text, patchLine) || `"patch": "${spec}"`, {
+      vars: { path: spec },
+    })
+    break
   }
 
   const dangerous = findDangerousDshDeclaration(pkg.dsh);
@@ -392,50 +412,22 @@ export function scanPackageManifest(context) {
  * JavaScript / TypeScript source analysis
  * ------------------------------------------------------------------------- */
 
-const EGRESS_PATTERNS = [
-  { api: 'fetch', re: /\bfetch\s*\(/ },
-  { api: 'http(s).request', re: /\bhttps?\.\s*(?:request|get)\s*\(/ },
-  { api: 'axios', re: /\baxios(?:\.\w+)?\s*\(/ },
-  { api: 'undici', re: /\bundici\s*\.\s*(?:request|fetch|stream|connect|Pool|Agent)\b/ },
-  { api: 'WebSocket', re: /\bnew\s+WebSocket\s*\(/ },
-  { api: 'net.Socket', re: /\bnew\s+(?:net\.)?Socket\s*\(/ },
-  { api: 'net.connect', re: /\bnet\s*\.\s*(?:connect|createConnection)\s*\(/ },
-  { api: 'XMLHttpRequest', re: /\bnew\s+XMLHttpRequest\s*\(|\bnew\s+window\.XMLHttpRequest\s*\(/ },
-  { api: 'EventSource', re: /\bnew\s+EventSource\s*\(/ },
-  { api: 'navigator.sendBeacon', re: /\bnavigator\s*\.\s*sendBeacon\s*\(/ },
-  { api: 'tls.connect', re: /\btls\s*\.\s*connect\s*\(/ },
-  { api: 'dgram', re: /\bdgram\s*\.\s*createSocket\s*\(/ },
-];
+/**
+ * Rule data is read on every scan, not captured at import: reloading a rule pack
+ * (settings save / plugin rebuild) must take effect without a process restart.
+ */
+const egressPatterns = () => getRulePack().audit.egressPatterns;
+const credentialPathPatterns = () => getRulePack().audit.credentialPaths;
+const secretTokenPatterns = () => getRulePack().audit.secretTokens;
+const privilegePatterns = () => getRulePack().audit.privilegePatterns;
 
 const URL_RE = /(?:https?|wss?):\/\/[^\s'"`<>()\],;]+/g;
 const SUSPICIOUS_ENDPOINT_RE = /(?:ngrok(?:-free)?\.(?:io|app|dev)|pastebin(?:\.com)?|paste\.ee|transfer\.sh|webhook\.site|requestbin|pipedream\.net|beeceptor\.com|interact\.sh|oast\.(?:pro|fun|me|live|site)|burpcollaborator|discord(?:app)?\.com\/api\/webhooks|api\.telegram\.org\/bot|0x0\.st|file\.io|gofile\.io|termbin\.com|hastebin\.com|ghostbin\.io|anonfiles\.com|sendspace\.com)/i;
 const ALLOWED_HOST_RE = /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|::1|(?:[a-z0-9-]+\.)*deepseek\.(?:com|ai|tech))$/i;
 
-const CREDENTIAL_PATH_PATTERNS = [
-  /(?:~|\$HOME|%USERPROFILE%|\$\{?HOME\}?)[\\/]\.ssh\b/,
-  /[\\/]\.ssh[\\/]/,
-  /[\\/]\.aws[\\/]credentials\b/,
-  /[\\/]\.npmrc\b/,
-  /[\\/]\.git-credentials\b/,
-  /[\\/]\.netrc\b/,
-  /\bid_(?:rsa|ed25519|ecdsa|dsa)\b/,
-  /[\\/]\.env(?:\.(?:local|production|development|test|staging|preview))?\b/,
-  /['"`]\.env(?:\.(?:local|production|development|test|staging|preview))?['"`]/,
-  /['"`][^'"`\n]*\.(?:pem|key|pfx|p12)['"`]/,
-  /%APPDATA%[\\/][^'"`\n]*(?:credential|token|secret|\.ssh|\.aws|\.npmrc)/i,
-];
 
 const SECRET_ASSIGN_RE = /\b(api[_-]?key|apikey|secret|client[_-]?secret|access[_-]?key|secret[_-]?key|private[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token|password|passwd|pwd|token)\b\s*[:=]\s*(['"`])([^'"`\n]{16,})\2/i;
 
-const SECRET_TOKEN_PATTERNS = [
-  { kind: 'AWS Access Key', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
-  { kind: 'OpenAI API Key', re: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
-  { kind: 'GitHub Token', re: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b/ },
-  { kind: 'Slack Token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-  { kind: 'Google API Key', re: /\bAIza[0-9A-Za-z_-]{30,}\b/ },
-  { kind: 'GitLab Token', re: /\bglpat-[A-Za-z0-9_-]{20,}\b/ },
-  { kind: 'JWT', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
-];
 
 const PEM_RE = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/;
 const PLACEHOLDER_RE = /^(?:x{3,}|\*{3,}|\.{3,}|<[^>]*>|\$\{[^}]*\}|your[_-]?|example|sample|dummy|fake|test|placeholder|change[_-]?me|none|null|undefined|todo|redacted|secret|password)$/i;
@@ -451,6 +443,26 @@ function isPlaceholderSecret(value) {
   return false;
 }
 
+/**
+ * The canonical example credentials documentation ships with (AWS's
+ * `AKIAIOSFODNN7EXAMPLE`, Stripe/GitHub doc tokens, …) are not secrets. Leaving
+ * them at `blocker` turns every README and test fixture into a false alarm.
+ */
+const KNOWN_EXAMPLE_SECRETS = new Set([
+  'AKIAIOSFODNN7EXAMPLE',
+  'AKIAI44QH8DHBEXAMPLE',
+  'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+]);
+
+/** @param {string} value */
+function isExampleSecret(value) {
+  const text = String(value).trim();
+  if (text === '') return true;
+  if (KNOWN_EXAMPLE_SECRETS.has(text)) return true;
+  return /EXAMPLE|PLACEHOLDER|CHANGEME|REDACTED/i.test(text)
+    && /^(?:AKIA|ASIA|sk-|ghp_|gho_|xox|glpat-)/i.test(text);
+}
+
 const CFG_PATH_PATTERNS = [
   { kind: '.dsh 目录', re: /(?:^|[\s'"`=(])(?:~|\$HOME|%USERPROFILE%|\$\{?HOME\}?)?[\\/]?\.dsh(?![A-Za-z0-9_-])(?:[\\/][^\s'"`)]*)?/ },
   { kind: 'dsh profiles 目录', re: /(?:^|[\s'"`=(])[\\/]?profiles[\\/][^\s'"`)]*/ },
@@ -461,21 +473,12 @@ const CFG_PATH_PATTERNS = [
 
 const WRITE_API_RE = /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|rename|renameSync|copyFile|copyFileSync|cp|cpSync|unlink|unlinkSync|rm|rmSync|rmdir|rmdirSync|mkdir|mkdirSync|truncate|truncateSync|writeSync)\s*\(|\bfs\s*\.\s*promises\s*\.\s*(?:writeFile|appendFile|rename|rm|mkdir|copyFile|unlink)\s*\(/;
 
-const PRIVILEGE_PATTERNS = [
-  { detail: 'danger-full-access 权限模式', re: /\bdanger-full-access\b/ },
-  { detail: 'dangerously-skip-permissions', re: /\bdangerously-skip-permissions\b/i },
-  { detail: 'bypassPermissions / bypass-permissions', re: /\bbypassPermissions\b|\bbypass[-_]permissions\b/ },
-  { detail: 'approval = never/off', re: /\bapproval\s*[:=]\s*['"]?(?:never|off|false|allow)\b/i },
-  { detail: 'sandbox 被关闭', re: /\bsandbox\s*[:=]\s*['"]?(?:false|off|none|disabled)\b/i },
-  { detail: 'permission-presets 被改写', re: /\bpermission[-_]?presets?\s*[:=]\s*['"]?(?:danger|full|unrestricted|bypass|allow-all)/i },
-  { detail: '--no-sandbox', re: /--no-sandbox\b/ },
-];
 
 const DSH_ENV_WRITE_RE = /process\s*\.\s*env(?:\.\s*([A-Za-z0-9_]+)|\[\s*['"]([A-Za-z0-9_]+)['"]\s*\])\s*=(?!=)/g;
 
 const CHILD_PROCESS_IMPORT_RE = /(?:from\s*['"]node:child_process['"]|from\s*['"]child_process['"]|require\s*\(\s*['"](?:node:)?child_process['"]\s*\)|import\s*\(\s*['"](?:node:)?child_process['"]\s*\))/;
 const CHILD_PROCESS_NAMED_CALL_RE = /\b(?:execSync|execFileSync|spawnSync)\s*\(|\bchild_process\s*\.\s*(?:exec|execFile|spawn|fork)\s*\(/;
-const CHILD_PROCESS_IMPORTED_CALL_RE = /(?<![\w$.])(?:exec|execFile|spawn|fork)\s*\(/;
+const CHILD_PROCESS_IMPORTED_CALL_RE = /(?<![\w$])(?:[\w$]+\s*\.\s*)?(?:exec|execFile|spawn|fork)\s*\(/;
 const REMOTE_PIPE_RE = /(?:curl|wget)\b[^\n|]{0,400}\|\s*(?:sudo\s+)?(?:sh|bash|zsh|dash|ksh|fish|iex|Invoke-Expression|powershell|pwsh|cmd(?:\.exe)?)\b/i;
 const REMOTE_PIPE_PS_RE = /(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,400}\|\s*(?:iex|Invoke-Expression|powershell|pwsh|cmd(?:\.exe)?|sh|bash)\b/i;
 const ENCODED_PS_RE = /\bpowershell(?:\.exe)?\s+(?:-|--)?(?:enc|encodedcommand)\b/i;
@@ -547,6 +550,46 @@ function hasNearbyRelativeUrl(literalLines, line) {
     if (/['"`]\/(?!\/)/.test(literalLines[i] ?? '')) return true;
   }
   return false;
+}
+
+/** Decode a base64 literal if it looks like readable payload text. */
+function decodeBase64Text(raw) {
+  try {
+    const compact = String(raw).replace(/\s+/g, '');
+    if (compact.length < 16 || compact.length % 4 !== 0) return '';
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return '';
+    const buffer = Buffer.from(compact, 'base64');
+    if (buffer.length < 8) return '';
+    const text = buffer.toString('utf8');
+    const printable = text.replace(/[^\x20-\x7E\u4e00-\u9fff]/g, '');
+    return printable.length >= text.length * 0.8 ? text : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Decode a run of `\xNN` escapes. */
+function decodeHexEscapes(raw) {
+  try {
+    const bytes = [];
+    for (const match of String(raw).matchAll(/\\x([0-9a-fA-F]{2})/g)) bytes.push(parseInt(match[1], 16));
+    return bytes.length >= 4 ? Buffer.from(bytes).toString('utf8') : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Judge a decoded payload: suspicious API, network URL, or `| sh`. */
+function classifyDecodedPayload(decoded) {
+  const text = String(decoded).replace(/\s+/g, ' ').trim();
+  const suspicious = /\b(?:eval|exec|execSync|spawn|spawnSync|child_process|Invoke-Expression|iex|FromBase64String)\b/i.test(text);
+  const network = /https?:\/\//i.test(text) || /\b(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b/i.test(text);
+  const pipeShell = /\|\s*(?:sh|bash|powershell|pwsh)\b/i.test(text);
+  if (!suspicious && !network && !pipeShell) return null;
+  return {
+    severe: (network && (suspicious || pipeShell)),
+    detail: truncateEvidence(text, 70),
+  };
 }
 
 /** True when a write API is used on this line or one of the two previous lines. */
@@ -621,11 +664,12 @@ export function scanCodeFile(context) {
   }
   for (let i = 0; i < code.length; i += 1) {
     const codeLine = code[i] ?? '';
-    for (const pattern of EGRESS_PATTERNS) {
-      if (pattern.re.test(codeLine)) {
-        egressByLine.set(i + 1, pattern.api);
-        break;
-      }
+    for (const pattern of egressPatterns()) {
+      if (!pattern.re.test(codeLine)) continue;
+      // Same-origin relative requests (`fetch('/api/...')`) are not egress.
+      if (isClient && hasNearbyRelativeUrl(literals, i + 1)) break;
+      egressByLine.set(i + 1, pattern.api);
+      break;
     }
   }
 
@@ -639,6 +683,27 @@ export function scanCodeFile(context) {
   }
 
   const childProcessImported = literals.some((line) => CHILD_PROCESS_IMPORT_RE.test(line));
+  // Locally bound names of child_process APIs (`spawn as launch`, `const cp = require(...)`).
+  const childProcessNames = new Set();
+  for (const line of literals) {
+    if (!CHILD_PROCESS_IMPORT_RE.test(line)) continue;
+    const named = /import\s*\{([^}]+)\}\s*from\s*['"](?:node:)?child_process['"]/.exec(line);
+    if (named) {
+      for (const part of named[1].split(',')) {
+        const [original, alias] = part.trim().split(/\s+as\s+/);
+        const bound = (alias ?? original ?? '').trim();
+        if (bound) childProcessNames.add(bound);
+      }
+    }
+    const required = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"](?:node:)?child_process['"]\s*\)/.exec(line);
+    if (required) childProcessNames.add(required[1]);
+  }
+  const aliasedChildProcessCall = codeLine => {
+    for (const name of childProcessNames) {
+      if (new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`).test(codeLine)) return name;
+    }
+    return null;
+  };
 
   for (let i = 0; i < original.length; i += 1) {
     const lineNo = i + 1;
@@ -646,13 +711,13 @@ export function scanCodeFile(context) {
     const literalLine = literals[i] ?? '';
 
     // ---- dynamic code execution -----------------------------------------
-    if (/(?<![\w$.])eval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(\s*['"`]|\.\s*constructor\s*\(\s*['"`]/.test(codeLine)) {
+    if (/(?<![\w$.])eval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(\s*['"`]|\.\s*constructor\s*\(\s*['"`]|\(\s*0\s*,\s*eval\s*\)|(?:globalThis|window|self)\s*\[\s*['"`]eval['"`]\s*\]/.test(codeLine)) {
       add('VG-DYN-01', lineNo, { vars: { detail: 'eval/new Function' }, confidence: 'heuristic' });
     }
     if (/\bInvoke-Expression\b|\biex\s+[^|\s]/i.test(literalLine)) {
       add('VG-DYN-01', lineNo, { vars: { detail: 'PowerShell Invoke-Expression / iex' }, confidence: 'heuristic' });
     }
-    if (childProcessImported && CHILD_PROCESS_IMPORTED_CALL_RE.test(codeLine)) {
+    if (childProcessImported && (CHILD_PROCESS_IMPORTED_CALL_RE.test(codeLine) || aliasedChildProcessCall(codeLine))) {
       add('VG-DYN-02', lineNo, { vars: { api: 'child_process 调用' }, confidence: 'heuristic' });
     } else if (CHILD_PROCESS_NAMED_CALL_RE.test(codeLine)) {
       add('VG-DYN-02', lineNo, { vars: { api: 'child_process 调用' }, confidence: 'heuristic' });
@@ -680,26 +745,52 @@ export function scanCodeFile(context) {
     if (/\bvm\s*\.\s*(?:runIn\w*|Script|compileFunction|createContext)\b/.test(codeLine)) {
       add('VG-DYN-05', lineNo, { vars: { detail: 'vm.runIn*/vm.Script' }, confidence: 'heuristic' });
     }
+    // ---- encoded payloads (base64 / hex literals) ------------------------
+    // Decoding a literal is deterministic; general dataflow between variables is
+    // out of scope (documented limitation).
+    let encodedAdded = false;
+    for (const match of literalLine.matchAll(/(?:Buffer\.from|atob|FromBase64String)\s*\(\s*['"`]([A-Za-z0-9+/=\s]{16,})['"`]/gi)) {
+      const decoded = decodeBase64Text(match[1]);
+      if (decoded === '') continue;
+      const report = classifyDecodedPayload(decoded);
+      if (!report) continue;
+      add('VG-DYN-06', lineNo, {
+        vars: { detail: report.detail },
+        confidence: 'heuristic',
+        severity: report.severe ? 'blocker' : undefined,
+      });
+      encodedAdded = true;
+      break;
+    }
+    if (!encodedAdded) {
+      const hexRun = /(?:\\x[0-9a-fA-F]{2}){4,}/.exec(literalLine);
+      if (hexRun) {
+        const decoded = decodeHexEscapes(hexRun[0]);
+        const report = decoded === '' ? null : classifyDecodedPayload(decoded);
+        if (report) add('VG-DYN-06', lineNo, { vars: { detail: report.detail }, confidence: 'heuristic' });
+      }
+    }
 
     // ---- credential access ----------------------------------------------
     if (PEM_RE.test(literalLine)) {
       add('VG-CRED-02', lineNo, { confidence: 'confirmed' });
     }
     const assignMatch = SECRET_ASSIGN_RE.exec(literalLine);
-    if (assignMatch && !isPlaceholderSecret(assignMatch[3])) {
+    if (assignMatch && !isPlaceholderSecret(assignMatch[3]) && !isExampleSecret(assignMatch[3])) {
       add('VG-CRED-01', lineNo, {
         vars: { secretKind: assignMatch[1] },
         confidence: 'confirmed',
       });
     }
-    for (const tokenPattern of SECRET_TOKEN_PATTERNS) {
-      if (tokenPattern.re.test(literalLine)) {
+    for (const tokenPattern of secretTokenPatterns()) {
+      const tokenMatch = tokenPattern.re.exec(literalLine);
+      if (tokenMatch && !isExampleSecret(tokenMatch[0])) {
         add('VG-CRED-01', lineNo, { vars: { secretKind: tokenPattern.kind }, confidence: 'confirmed' });
         break;
       }
     }
-    for (const pattern of CREDENTIAL_PATH_PATTERNS) {
-      const match = pattern.exec(literalLine);
+    for (const pattern of credentialPathPatterns()) {
+      const match = pattern.re.exec(literalLine);
       if (match) {
         add('VG-CRED-03', lineNo, { vars: { path: truncateEvidence(match[0], 80) }, confidence: 'heuristic' });
         break;
@@ -708,10 +799,24 @@ export function scanCodeFile(context) {
     const envReadRe = /process\s*\.\s*env(?:\.\s*([A-Za-z0-9_]+)|\[\s*['"]([A-Za-z0-9_]+)['"]\s*\])/g;
     for (const match of literalLine.matchAll(envReadRe)) {
       const name = match[1] ?? match[2] ?? '';
-      if (/\bTOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL|AUTH/i.test(name)
+      // `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY` and friends: a leading word
+      // boundary never matches after `_`, so match at `^` or a separator.
+      if (/(?:^|_)(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL|AUTH)(?:$|_)/i.test(name)
         && !/\bPUBLIC\b/i.test(name)) {
         add('VG-CRED-04', lineNo, { vars: { name }, confidence: 'heuristic' });
         break;
+      }
+    }
+    // `const { GITHUB_TOKEN } = process.env` bypasses the dotted form above.
+    const destructuredEnv = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*process\s*\.\s*env/.exec(literalLine);
+    if (destructuredEnv) {
+      for (const part of destructuredEnv[1].split(',')) {
+        const name = part.split(':')[0].trim().replace(/^['"]|['"]$/g, '');
+        if (name === '' || /\bPUBLIC\b/i.test(name)) continue;
+        if (/(?:^|_)(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL|AUTH)(?:$|_)/i.test(name)) {
+          add('VG-CRED-04', lineNo, { vars: { name }, confidence: 'heuristic' });
+          break;
+        }
       }
     }
 
@@ -740,14 +845,22 @@ export function scanCodeFile(context) {
       if (!match) continue;
       const detail = truncateEvidence(match[0], 70);
       const vars = { path: detail && detail !== pattern.kind ? `${pattern.kind}：${detail}` : pattern.kind };
+      const hostConfig = pattern.kind === '.dsh 目录'
+        || pattern.kind === 'dsh profiles 目录'
+        || /[\\/]\.dsh\b|[\\/]profiles[\\/]/i.test(detail);
       if (isWriteContext(code, i)) {
-        add('VG-CFG-01', lineNo, { vars, confidence: 'heuristic' });
-      } else {
-        add('VG-CFG-02', lineNo, { vars, confidence: 'heuristic' });
+        // Only dsh's own profile/config is a tampering target: a plugin writing
+        // its own settings.json or a project's package.json is normal work.
+        if (hostConfig) add('VG-CFG-01', lineNo, { vars, confidence: 'heuristic' });
+        break;
       }
+      // A doc/UI string that merely mentions `~/.dsh` is not a config read.
+      const readApi = /\b(?:readFile|readFileSync|readdir|readdirSync|existsSync|createReadStream|require\s*\(|import\s*\()/i.test(codeLine);
+      const specificPath = /\.dsh[\\/]|[\\/]profiles[\\/][^\s'"`)]+/i.test(detail);
+      if (hostConfig && (readApi || specificPath)) add('VG-CFG-02', lineNo, { vars, confidence: 'heuristic' });
       break;
     }
-    for (const pattern of PRIVILEGE_PATTERNS) {
+    for (const pattern of privilegePatterns()) {
       if (pattern.re.test(literalLine)) {
         add('VG-CFG-03', lineNo, { vars: { detail: pattern.detail }, confidence: 'heuristic' });
         break;
@@ -790,7 +903,9 @@ export function scanCodeFile(context) {
   }
   const envReadFinding = findings.find((finding) => finding.ruleId === 'VG-CRED-04');
   if (hasEgress && envReadFinding) {
-    envReadFinding.severity = 'review';
+    // Reading a credential-shaped environment variable *and* talking to the
+    // network is an exfiltration shape, not a notice.
+    envReadFinding.severity = 'blocker';
     envReadFinding.extraMeans = escalationSentence('env-network', { host: externalHost });
   }
   const dynamicFinding = findings.find((finding) => finding.ruleId === 'VG-DYN-01');
@@ -819,6 +934,38 @@ export function scanCodeFile(context) {
     if (beacon) add('VG-DSH-03', beacon[0], { vars: { detail: 'navigator.sendBeacon' }, confidence: 'heuristic' });
   }
 
+  // A pattern that only occurs inside a string literal is data, not behaviour:
+  // the scanner must not turn its own rule table or UI copy into blockers. When
+  // the masked code line still shows an execution API, the original severity is
+  // kept (the literal is then a payload handed to something that runs it).
+  const EXECUTION_CONTEXT_RE = /\b(?:spawn|spawnSync|exec|execFile|execSync|fork|eval|Function|require\s*\(|import\s*\(|fetch|axios|WebSocket|child_process|invoke-expression|iwr|iex|start-process|powershell|pwsh|bash)\b|vm\s*\./i;
+  for (const finding of findings) {
+    if (finding.ruleId !== 'VG-DYN-01' && finding.ruleId !== 'VG-DYN-03') continue;
+    const codeLine = Number.isInteger(finding.line) ? (code[finding.line - 1] ?? '') : '';
+    if (codeLine === '' || EXECUTION_CONTEXT_RE.test(codeLine)) continue;
+    finding.severity = 'notice';
+    finding.extraMeans = [finding.extraMeans, '该模式只出现在字符串/文案里，未出现在可执行代码中，因此按提示处理。']
+      .filter(Boolean)
+      .join(' ');
+  }
+  // A privilege keyword that only occurs in a string (rule table, UI copy,
+  // documentation) is not a declared policy — unless the literal is directly
+  // returned/assigned, which is how a plugin declares the mode it wants.
+  // Keep the latter at blocker so a real declaration still gates installs.
+  for (const finding of findings) {
+    if (finding.ruleId !== 'VG-CFG-03') continue;
+    const codeLine = Number.isInteger(finding.line) ? (code[finding.line - 1] ?? '') : '';
+    if (codeLine === '') continue;
+    if (privilegePatterns().some(pattern => pattern.re.test(codeLine))) continue;
+    if (/\breturn\s*['"`]|(?<![=!<>])=(?!=)\s*['"`]/.test(codeLine)) continue;
+    if (finding.severity !== 'review') {
+      finding.severity = 'review';
+      finding.extraMeans = [finding.extraMeans, '该关键词只出现在字符串/文案里，未在可执行代码中声明权限，因此按“可疑”处理。']
+        .filter(Boolean)
+        .join(' ');
+    }
+  }
+
   return findings;
 }
 
@@ -827,15 +974,6 @@ export function scanCodeFile(context) {
  * ------------------------------------------------------------------------- */
 
 const HIGH_PRIVILEGE_KEY_RE = /^(?:credentials?|credential[-_]?store|sandbox|approval|permission[-_]?presets?|plugin[-_]?manager|config[-_]?editor)$/i;
-
-const PATCH_PRIVILEGE_PATTERNS = [
-  { detail: 'danger-full-access 权限模式', re: /danger-full-access/i },
-  { detail: 'dangerously-skip-permissions', re: /dangerously-skip-permissions/i },
-  { detail: 'bypassPermissions', re: /bypassPermissions|bypass[-_]permissions/i },
-  { detail: 'approval = never/off', re: /approval\s*:\s*['"]?(?:never|off|false|allow)\b/i },
-  { detail: 'sandbox 被关闭', re: /sandbox\s*:\s*['"]?(?:false|off|none|disabled)\b/i },
-  { detail: 'permission-presets 被改写', re: /permission[-_]?presets?\s*:\s*['"]?(?:danger|full|unrestricted|bypass)/i },
-];
 
 /** Remove a YAML comment (`#` outside quotes). */
 function stripYamlComment(line) {
@@ -881,9 +1019,18 @@ function extractYamlProps(lines, start, end) {
   return props;
 }
 
+/** Decode YAML escape sequences that could hide a keyword from the matcher. */
+function decodeYamlEscapes(value) {
+  return String(value ?? '')
+    .replace(/\\u([0-9A-Fa-f]{4})/g, (_match, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\U([0-9A-Fa-f]{8})/g, (_match, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/\\x([0-9A-Fa-f]{2})/g, (_match, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 /** Find a high-privilege service keyword inside an id/name/string value. */
 function highPrivilegeKeyword(value) {
-  const match = /(?:^|[\s'"@/._:-])(credentials?|sandbox|approval|permission[-_]?presets?|plugin[-_]?manager|config[-_]?editor)(?:$|[\s'"@/._:-])/i.exec(String(value ?? ''));
+  const decoded = decodeYamlEscapes(value);
+  const match = /(?:^|[\s'"@/._:-])(credentials?|sandbox|approval|permission[-_]?presets?|plugin[-_]?manager|config[-_]?editor)(?:$|[\s'"@/._:-])/i.exec(decoded);
   return match ? match[1] : null;
 }
 
@@ -1020,9 +1167,14 @@ export function parsePatchYaml(text) {
       const configProp = props.find((prop) => prop.key === 'config');
       const disabledProp = props.find((prop) => prop.key === 'disabled');
       let highPrivilege = null;
-      if (nameProp) {
-        const keyword = highPrivilegeKeyword(nameProp.value);
-        if (keyword) highPrivilege = { line: nameProp.line, service: keyword, text: nameProp.text };
+      // An override can target a high-privilege row by id alone (no `name:`).
+      for (const prop of [idProp, nameProp]) {
+        if (!prop) continue;
+        const keyword = highPrivilegeKeyword(prop.value);
+        if (keyword) {
+          highPrivilege = { line: prop.line, service: keyword, text: prop.text };
+          break;
+        }
       }
       if (!highPrivilege) highPrivilege = highPrivilegeConfigKey(props, configProp);
       entries.push({
@@ -1081,9 +1233,11 @@ export function scanPatchFile(context) {
         ? lineTextAt(text, parsed.line)
         : `cordis.patch.yml 解析失败：${parsed.reason ?? '未知原因'}`,
     });
-    return findings;
+    // Do not return here: an unparseable patch can still hide high-privilege
+    // keywords or !!js in plain lines, and skipping them would reward the
+    // malformed input.
   }
-  if (parsed.empty) return findings;
+  if (parsed.ok && parsed.empty) return findings;
 
   for (const entry of parsed.entries) {
     if (entry.kind === 'insert') {
@@ -1132,7 +1286,7 @@ export function scanPatchFile(context) {
   for (let i = 0; i < lines.length; i += 1) {
     const withoutComment = stripYamlComment(lines[i]);
     if (!withoutComment.trim()) continue;
-    for (const pattern of PATCH_PRIVILEGE_PATTERNS) {
+    for (const pattern of getRulePack().audit.patchPrivilegePatterns) {
       if (pattern.re.test(withoutComment)) {
         add('VG-DSH-05', i + 1, { vars: { detail: pattern.detail } });
         break;

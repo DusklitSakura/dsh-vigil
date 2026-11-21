@@ -84,6 +84,25 @@ export function summarizeInstallScan(report, meta = {}) {
       const where = item.file ? `（${item.file}${item.line ? `:${item.line}` : ''}）` : ''
       return `${item.title ?? item.ruleId ?? '未知规则'}${where}`
     })
+  // The install prompt says "N 个高危命中"; only blockers may be listed there.
+  const blockerReasons = top
+    .filter(item => item.severity === 'blocker')
+    .map(item => {
+      const where = item.file ? `（${item.file}${item.line ? `:${item.line}` : ''}）` : ''
+      return `${item.title ?? item.ruleId ?? '未知规则'}${where}`
+    })
+  // Coverage is part of the verdict: "0 blockers" only means something when the
+  // scan actually read the files. A padded package must not be able to turn a
+  // skipped file into a clean result.
+  const filesSkipped = Number(report?.limits?.filesSkipped) || 0
+  const bytesSkipped = Number(report?.limits?.bytesSkipped) || 0
+  const scanTruncated = report?.limits?.truncated === true
+  const unauditedEntry = report?.limits?.unauditedEntry === true
+  const nonTextFiles = Number(report?.limits?.nonTextFiles) || 0
+  const incomplete = scanTruncated || filesSkipped > 0 || bytesSkipped > 0 || unauditedEntry
+  const coverageNote = incomplete
+    ? `扫描未覆盖全部内容（跳过 ${filesSkipped} 个文件 / ${bytesSkipped} 字节${scanTruncated ? '，结果被截断' : ''}${unauditedEntry ? '；入口位于未扫描的构建目录' : ''}）`
+    : null
   return {
     target: String(meta.target ?? ''),
     dir: String(meta.dir ?? ''),
@@ -94,7 +113,15 @@ export function summarizeInstallScan(report, meta = {}) {
     top,
     total: findings.length,
     truncated: sampled.length < findings.length,
+    filesSkipped,
+    bytesSkipped,
+    scanTruncated,
+    unauditedEntry,
+    nonTextFiles,
+    incomplete,
+    coverageNote,
     reasons,
-    text: `安装前静态审计：${blockers} 个高危，${review} 个可疑，${notice} 个提示`,
+    blockerReasons,
+    text: `安装前静态审计：${blockers} 个高危，${review} 个可疑，${notice} 个提示${coverageNote ? `；${coverageNote}` : ''}`,
   }
 }

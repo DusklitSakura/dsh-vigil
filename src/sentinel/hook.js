@@ -31,7 +31,7 @@ import { strictestDecision } from '../config.js'
 import { summarizeArguments, redactSecrets } from '../audit-log.js'
 import { scanPluginDirectory } from '../audit/scan.js'
 import { resolveLocalInstallTarget, summarizeInstallScan } from '../audit/install-scan.js'
-import { getHomeDir, truncate } from '../util.js'
+import { getHomeDir, resolvePath, truncate } from '../util.js'
 import { inspectSelfProtection } from './guard.js'
 import {
   commandTextOf,
@@ -63,7 +63,12 @@ import {
 export function createInterceptor(options) {
   const { config, audit, policy, sage } = options
   const logger = options.logger
-  const cwd = resolve(options.cwd ?? process.cwd())
+  // An empty string means "the effective working directory is unknown" (the host
+  // process runs inside the Harness home). Relative delete targets then stay
+  // unresolved and are treated as untrusted instead of being guessed.
+  const cwd = typeof options.cwd === 'string' && options.cwd === ''
+    ? ''
+    : resolve(options.cwd ?? process.cwd())
   const homeDir = getHomeDir()
   const enabled = config?.sentinel?.enabled !== false || config?.deleteGuard?.enabled !== false
   const monitor = config?.mode === 'monitor'
@@ -72,6 +77,21 @@ export function createInterceptor(options) {
   const counters = new Map()
   /** @type {Array<object>} */
   const recent = []
+
+  /**
+   * Effective working directory for one call: an explicit workdir argument wins,
+   * then the configured project root, then the host cwd when it is a real
+   * workspace. Never falls back to a path inside the Harness home.
+   * @param {Record<string, any>} args
+   * @returns {string}
+   */
+  function cwdFor(args) {
+    for (const key of ['workdir', 'workingDirectory', 'work_dir', 'cwd']) {
+      const value = args?.[key]
+      if (typeof value === 'string' && value.trim() !== '') return resolvePath(value, cwd || process.cwd())
+    }
+    return cwd
+  }
 
   /**
    * @param {string} key
@@ -90,31 +110,36 @@ export function createInterceptor(options) {
 
   /**
    * @param {{ name: string, arguments?: unknown, agent?: { id?: string } }} exec
+   * @param {string} baseCwd effective working directory for this call
    * @returns {any} a synthetic delete intent for fs-level delete/move tools
    */
-  function intentFromTool(exec) {
+  function intentFromTool(exec, baseCwd) {
     const args = exec?.arguments && typeof exec.arguments === 'object' ? /** @type {Record<string, any>} */ (exec.arguments) : {}
-    const paths = pathsOf(args)
+    const paths = args ? pathsOf(args) : []
     /** @type {Array<Record<string, unknown>>} */
     const targets = []
+    let unresolved = false
     for (const raw of paths) {
-      const absolute = raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith('\\\\')
-      const resolved = absolute ? resolve(raw) : resolve(cwd, raw)
+      const absolute = raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith('\\\\') || raw.startsWith('~')
+      let resolvedPath = null
+      if (absolute) resolvedPath = resolve(resolvePath(raw, baseCwd || process.cwd()))
+      else if (baseCwd) resolvedPath = resolve(baseCwd, raw)
+      else unresolved = true
       targets.push({
         raw,
-        resolvedPath: resolved,
+        resolvedPath,
         hasGlob: /[*?[{]/.test(raw),
         rootLike: false,
         scope: 'literal',
       })
     }
-    if (targets.length === 0) {
+    if (targets.length === 0 || unresolved) {
       return {
         isDelete: true,
         dryRun: false,
         recursive: false,
         wildcard: false,
-        targets: [],
+        targets,
         unparsed: true,
         riskSignals: ['unknown-construct'],
       }
@@ -164,6 +189,7 @@ export function createInterceptor(options) {
       const sessionId = exec?.agent?.id ? String(exec.agent.id) : null
       const args = exec?.arguments && typeof exec.arguments === 'object' ? exec.arguments : {}
       const command = commandTextOf(toolName, args)
+      const callCwd = cwdFor(args)
 
       /** @type {any[]} */
       const findings = []
@@ -175,12 +201,12 @@ export function createInterceptor(options) {
       // 1. Deletion intent (shell text or a delete/move tool).
       let assessment = null
       const shellDeleteIntent = command !== null && isShellTool(toolName)
-        ? parseDeleteIntent(command, { cwd, homeDir, platform: process.platform })
+        ? parseDeleteIntent(command, { cwd: callCwd, homeDir, platform: process.platform })
         : null
       if (shellDeleteIntent?.isDelete) {
         assessment = policy.assess(shellDeleteIntent, { sessionId, tool: toolName })
       } else if (isDeleteTool(toolName)) {
-        assessment = policy.assess(intentFromTool(exec), { sessionId, tool: toolName })
+        assessment = policy.assess(intentFromTool(exec, callCwd), { sessionId, tool: toolName })
       }
       if (assessment) {
         findings.push(...(assessment.kind === 'allow' ? [] : [{
@@ -193,7 +219,7 @@ export function createInterceptor(options) {
       }
 
       // 2. dsh-specific runtime rules.
-      const ruleResult = inspectToolCall(exec, config, { cwd, pluginDir: options.pluginDir })
+      const ruleResult = inspectToolCall(exec, config, { cwd: callCwd || process.cwd(), pluginDir: options.pluginDir })
       findings.push(...ruleResult.findings)
       ruleIds.push(...ruleResult.ruleIds)
       reasons.push(...ruleResult.reasons)
@@ -217,38 +243,69 @@ export function createInterceptor(options) {
           const target = resolveLocalInstallTarget(args, { cwd })
           if (target) {
             try {
-              const report = await (options.scanPlugin ?? scanPluginDirectory)(target.dir, { includeInfo: false, maxFiles: 400 })
-              const scanSummary = summarizeInstallScan(report, { target: target.spec, dir: target.dir })
-              ruleIds.push('VG-AUDIT-01')
-              reasons.push(scanSummary.text)
-              if (scanSummary.blockers > 0) {
-                // High-risk findings are a question, not a veto: the page shows
-                // what is dangerous and lets the user continue or block.
-                const risk = scanSummary.reasons.length > 0 ? scanSummary.reasons.slice(0, 3).join('；') : '存在高风险代码'
-                const riskPrompt = `该插件有 ${scanSummary.blockers} 个高危命中：${risk}。是否继续安装？`
-                findings.push({ ruleId: 'VG-AUDIT-01', kind: 'ask', reason: riskPrompt })
-                reasons.push(riskPrompt)
-              }
-              try {
-                audit?.record({
-                  kind: 'event',
-                  event: 'install-scan',
-                  tool: toolName,
-                  session: sessionId,
-                  decision: scanSummary.blockers > 0 ? 'ask' : 'none',
-                  ruleIds: scanSummary.ruleIds.slice(0, 10),
-                  reason: `${target.spec} ${scanSummary.text}`,
-                  extra: {
-                    target: target.spec,
-                    dir: target.dir,
-                    blockers: scanSummary.blockers,
-                    review: scanSummary.review,
-                    notices: scanSummary.notice,
-                    findings: scanSummary.top,
-                  },
-                })
-              } catch {
-                // auditing is best-effort; the decision stands on its own
+              // The gate must stay synchronous, so it gets a strict budget: a big
+              // package is scanned cooperatively up to the deadline, and an
+              // unfinished scan becomes a question instead of a stall.
+              const deadlineAt = Date.now() + 1500
+              const scanPromise = (options.scanPlugin ?? scanPluginDirectory)(target.dir, {
+                includeInfo: false,
+                maxFiles: 200,
+                deadlineAt,
+              })
+              const report = await Promise.race([
+                scanPromise,
+                new Promise(resolve => {
+                  const timer = setTimeout(() => resolve(null), 2500)
+                  if (typeof timer.unref === 'function') timer.unref()
+                }),
+              ])
+              if (!report) {
+                const timeoutPrompt = '本地插件静态审计超时（超过 1.5 秒），未能给出结论。是否仍要继续安装？'
+                findings.push({ ruleId: 'VG-AUDIT-02', kind: 'ask', reason: timeoutPrompt })
+                reasons.push(timeoutPrompt)
+                ruleIds.push('VG-AUDIT-02')
+              } else {
+                const scanSummary = summarizeInstallScan(report, { target: target.spec, dir: target.dir })
+                ruleIds.push('VG-AUDIT-01')
+                reasons.push(scanSummary.text)
+                if (scanSummary.blockers > 0) {
+                  // High-risk findings are a question, not a veto: the page shows
+                  // what is dangerous and lets the user continue or block.
+                  const riskList = scanSummary.blockerReasons.length > 0 ? scanSummary.blockerReasons : scanSummary.reasons
+                  const risk = riskList.length > 0 ? riskList.slice(0, 3).join('；') : '存在高风险代码'
+                  const riskPrompt = `该插件有 ${scanSummary.blockers} 个高危命中：${risk}。是否继续安装？`
+                  findings.push({ ruleId: 'VG-AUDIT-01', kind: 'ask', reason: riskPrompt })
+                  reasons.push(riskPrompt)
+                } else if (scanSummary.incomplete) {
+                  // "No blockers" is only meaningful when the scanner read the
+                  // package; a padded/oversized/truncated scan is a question.
+                  const coveragePrompt = `静态审计未能覆盖该插件的全部文件：${scanSummary.coverageNote}。是否仍要继续安装？`
+                  findings.push({ ruleId: 'VG-AUDIT-02', kind: 'ask', reason: coveragePrompt })
+                  reasons.push(coveragePrompt)
+                }
+                try {
+                  audit?.record({
+                    kind: 'event',
+                    event: 'install-scan',
+                    tool: toolName,
+                    session: sessionId,
+                    decision: scanSummary.blockers > 0 ? 'ask' : 'none',
+                    ruleIds: scanSummary.ruleIds.slice(0, 10),
+                    reason: `${target.spec} ${scanSummary.text}`,
+                    extra: {
+                      target: target.spec,
+                      dir: target.dir,
+                      blockers: scanSummary.blockers,
+                      review: scanSummary.review,
+                      notices: scanSummary.notice,
+                      filesSkipped: scanSummary.filesSkipped,
+                      scanTruncated: scanSummary.scanTruncated,
+                      findings: scanSummary.top,
+                    },
+                  })
+                } catch {
+                  // auditing is best-effort; the decision stands on its own
+                }
               }
             } catch (error) {
               logger?.warn?.(`[dsh-vigil] 安装前静态审计失败：${error instanceof Error ? error.message : String(error)}`)

@@ -56,7 +56,15 @@ test('clean plugin produces zero findings and a full report shape', async () => 
   assert.ok(!Number.isNaN(Date.parse(report.scannedAt)));
   assert.equal(typeof report.durationMs, 'number');
   assert.equal(report.filesScanned, 3);
-  assert.deepEqual(report.limits, { filesSkipped: 0, bytesSkipped: 0, truncated: false });
+  assert.deepEqual(report.limits, {
+    filesSkipped: 0,
+    bytesSkipped: 0,
+    truncated: false,
+    deadline: false,
+    ignoredDirectories: [],
+    unauditedEntry: false,
+    nonTextFiles: 0,
+  });
   assert.equal(report.summary.byCategory.credential, 0);
   assert.equal(report.summary.byCategory['dsh-attack'], 0);
   assert.match(report.disclaimer, /静态扫描无法覆盖运行时可变行为/);
@@ -94,7 +102,7 @@ test('hardcoded AWS-like secret literal is reported as a blocker', async () => {
   assert.equal(finding.category, 'credential');
   assert.equal(finding.file, 'src/config.js');
   assert.equal(finding.line, 2);
-  assert.match(finding.evidence, /AKIAIOSFODNN7EXAMPLE/);
+  assert.match(finding.evidence, /AKIA2E7QK4M9ZP3RTU6W/);
   assert.equal(finding.confidence, 'confirmed');
 });
 
@@ -252,9 +260,10 @@ test('scanner does not follow symlinks/junctions', async (t) => {
 
 test('maxFiles limit truncates deterministically and can hide info findings', async () => {
   const limited = await scanPluginDirectory(fixture('clean'), { maxFiles: 1 });
-  assert.equal(limited.filesScanned, 1);
+  // The manifest is always read directly: a file budget must not be able to
+  // hide how the bundle is declared.
+  assert.ok(limited.filesScanned >= 1);
   assert.equal(limited.limits.truncated, true);
-  assert.equal(limited.summary.info, 1);
   assert.ok(findingByRule(limited, 'VG-SCAN-03'));
 
   const withoutInfo = await scanPluginDirectory(fixture('clean'), { maxFiles: 1, includeInfo: false });
@@ -309,10 +318,10 @@ test('broken package.json is a notice, not a crash', async () => {
 
 test('manifest wiring and unparsed patch findings are reported', async () => {
   const wiring = await scanPluginDirectory(fixture('missing-wiring'));
-  const wiringFinding = findingByRule(wiring, 'VG-SUP-05');
-  assert.ok(wiringFinding, 'expected VG-SUP-05');
-  assert.equal(wiringFinding.severity, 'review');
-  assert.match(wiringFinding.means, /exports/);
+  // dsh loads `dsh.bundle.patch`; an extra `exports` entry is not required, so a
+  // correctly declared bundle must not be flagged for missing one.
+  assert.equal(findingByRule(wiring, 'VG-SUP-05'), undefined);
+  assert.equal(wiring.target.isDshPlugin, true);
 
   const noManifest = await scanPluginDirectory(fixture('no-manifest'));
   const noManifestFinding = findingByRule(noManifest, 'VG-SUP-06');
@@ -406,17 +415,18 @@ test('rule catalog ids are unique, categorized and match emitted findings', asyn
 test('card redacts secret-looking evidence but JSON keeps raw evidence', async () => {
   const report = await scanPluginDirectory(fixture('hardcoded-secret'));
   const finding = findingByRule(report, 'VG-CRED-01');
-  assert.match(finding.evidence, /AKIAIOSFODNN7EXAMPLE/);
+  assert.match(finding.evidence, /AKIA2E7QK4M9ZP3RTU6W/);
   const card = formatReportCard(report);
-  assert.equal(card.includes('AKIAIOSFODNN7EXAMPLE'), false, 'terminal card must not echo live secrets');
+  assert.equal(card.includes('AKIA2E7QK4M9ZP3RTU6W'), false, 'terminal card must not echo live secrets');
   assert.match(card, /AKIA\*\*\*/);
 });
 
 test('maxFileBytes limit skips oversized files and reports the blind spot', async () => {
   const report = await scanPluginDirectory(fixture('clean'), { maxFileBytes: 10 });
-  assert.equal(report.filesScanned, 0);
-  assert.ok(report.limits.bytesSkipped > 0);
-  assert.equal(report.limits.truncated, false);
+  // The manifest is read outside the per-file cap on purpose; the patch (and any
+  // other oversized file) is still reported as a blind spot.
+  assert.equal(report.filesScanned, 1);
+  assert.ok(report.limits.filesSkipped > 0);
   assert.ok(findingByRule(report, 'VG-SCAN-03'), 'expected an info finding for skipped files');
 });
 

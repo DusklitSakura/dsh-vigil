@@ -83,12 +83,12 @@ function buildSchema(schema) {
     extraCriticalRoots: list([]).volatile(),
     extraHighRoots: list([]).volatile(),
     includeProjectRootAsHigh: flag(true).volatile(),
+    projectRoot: text('').volatile().description('相对删除目标与项目根保护使用的工作区目录（留空自动判断）'),
     observeScale: flag(true).volatile().description('累计会话删除规模'),
   })
 
   /** Optional Sage engine adapter settings. */
-  const sage = () => schema.object({
-    enabled: flag(false).volatile(),
+  const sage = () => schema.object({    enabled: flag(false).volatile(),
     autoUpdate: flag(true).volatile(),
     updateIntervalMs: count(86400000).volatile(),
     required: flag(false).volatile(),
@@ -128,6 +128,11 @@ function buildSchema(schema) {
     maxFiles: count(5).volatile(),
     logArguments: flag(true).volatile(),
     argumentChars: count(300).volatile(),
+    anchor: schema.object({
+      enabled: flag(false).volatile().description('用环境变量中的密钥对链头做 HMAC 锚定'),
+      keyEnv: text('DSH_VIGIL_ANCHOR_KEY').volatile(),
+      everyN: count(100).volatile(),
+    }),
   })
 
   return schema.object({
@@ -147,6 +152,9 @@ function buildSchema(schema) {
     auditLog: auditLog(),
     tools: schema.object({
       enabled: flag(true).volatile(),
+    }),
+    rules: schema.object({
+      dir: text('').volatile().description('外部规则包目录（YAML）；留空使用 <DSH_HOME>/vigil/rules'),
     }),
     selfProtection: text('deny').volatile().description('删除、写入/编辑、卸载/停用/替换插件自身或状态目录时的决策：deny 或 ask'),
     notify: schema.object({

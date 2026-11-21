@@ -1,0 +1,130 @@
+# dsh-vigil static-audit rule data (install-time scanner half).
+#
+# The scanner engine (manifest/patch/code analysis, cross-signal escalation)
+# stays in src/audit/rules.js; this file carries the patterns it applies.
+# Drop a newer *.yaml into <DSH_HOME>/vigil/rules/ (or rules.dir) to update the
+# patterns without shipping a plugin release — later files win per section.
+schema: 1
+id: builtin-audit
+
+credentialPaths:
+  - source: '(?:~|\$HOME|%USERPROFILE%|\$\{?HOME\}?)[\\/]\.ssh\b'
+    label: SSH 目录
+  - source: '[\\/]\.ssh[\\/]'
+    label: SSH 目录
+  - source: '[\\/]\.aws[\\/]credentials\b'
+    label: AWS 凭据
+  - source: '[\\/]\.npmrc\b'
+    label: npm 凭据
+  - source: '[\\/]\.git-credentials\b'
+    label: Git 凭据
+  - source: '[\\/]\.netrc\b'
+    label: netrc 凭据
+  - source: '\bid_(?:rsa|ed25519|ecdsa|dsa)\b'
+    label: SSH 私钥
+  - source: '[\\/]\.env(?:\.(?:local|production|development|test|staging|preview))?\b'
+    label: .env 文件
+  - source: '[\x27"]\.env(?:\.(?:local|production|development|test|staging|preview))?[\x27"]'
+    label: .env 文件
+  - source: '[\x27"`][^\x27"`\n]*\.(?:pem|key|pfx|p12)[\x27"`]'
+    label: 私钥/证书文件
+  - source: '%APPDATA%[\\/][^\x27"`\n]*(?:credential|token|secret|\.ssh|\.aws|\.npmrc)'
+    flags: i
+    label: AppData 凭据
+  - source: '[\\/]\.docker[\\/]config\.json'
+    label: Docker 凭据
+  - source: '[\\/]\.kube[\\/]config\b'
+    label: Kubernetes 凭据
+  - source: '[\\/]\.config[\\/]gh[\\/]hosts\.yml'
+    label: GitHub CLI 凭据
+
+secretTokens:
+  - kind: AWS Access Key
+    source: '\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'
+  - kind: OpenAI API Key
+    source: '\bsk-[A-Za-z0-9_-]{20,}\b'
+  - kind: GitHub Token
+    source: '\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b'
+  - kind: Slack Token
+    source: '\bxox[baprs]-[A-Za-z0-9-]{10,}\b'
+  - kind: Google API Key
+    source: '\bAIza[0-9A-Za-z_-]{30,}\b'
+  - kind: GitLab Token
+    source: '\bglpat-[A-Za-z0-9_-]{20,}\b'
+  - kind: JWT
+    source: '\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b'
+
+privilegePatterns:
+  - detail: danger-full-access 权限模式
+    source: '\bdanger-full-access\b'
+  - detail: dangerously-skip-permissions
+    source: '\bdangerously-skip-permissions\b'
+    flags: i
+  - detail: bypassPermissions / bypass-permissions
+    source: '\bbypassPermissions\b|\bbypass[-_]permissions\b'
+  - detail: approval = never/off
+    source: '\bapproval\s*[:=]\s*["'']?(?:never|off|false|allow)\b'
+    flags: i
+  - detail: sandbox 被关闭
+    source: '\bsandbox\s*[:=]\s*["'']?(?:false|off|none|disabled)\b'
+    flags: i
+  - detail: permission-presets 被改写
+    source: '\bpermission[-_]?presets?\s*[:=]\s*["'']?(?:danger|full|unrestricted|bypass|allow-all)'
+    flags: i
+  - detail: --no-sandbox
+    source: '--no-sandbox\b'
+
+# `cordis.patch.yml` 里的 key: value 形式（补丁扫描专用）。
+patchPrivilegePatterns:
+  - detail: danger-full-access 权限模式
+    source: 'danger-full-access'
+    flags: i
+  - detail: dangerously-skip-permissions
+    source: 'dangerously-skip-permissions'
+    flags: i
+  - detail: bypassPermissions
+    source: 'bypassPermissions|bypass[-_]permissions'
+    flags: i
+  - detail: approval = never/off
+    source: 'approval\s*:\s*["'']?(?:never|off|false|allow)\b'
+    flags: i
+  - detail: sandbox 被关闭
+    source: 'sandbox\s*:\s*["'']?(?:false|off|none|disabled)\b'
+    flags: i
+  - detail: permission-presets 被改写
+    source: 'permission[-_]?presets?\s*:\s*["'']?(?:danger|full|unrestricted|bypass)'
+    flags: i
+
+egressPatterns:
+  - api: fetch
+    source: '\bfetch\s*\('
+  - api: http(s).request
+    source: '\bhttps?\.\s*(?:request|get)\s*\('
+  - api: axios
+    source: '\baxios(?:\.\w+)?\s*\('
+  - api: undici
+    source: '\bundici\s*\.\s*(?:request|fetch|stream|connect|Pool|Agent)\b'
+  - api: WebSocket
+    source: '\bnew\s+WebSocket\s*\('
+  - api: net.Socket
+    source: '\bnew\s+(?:net\.)?Socket\s*\('
+  - api: net.connect
+    source: '\bnet\s*\.\s*(?:connect|createConnection)\s*\('
+  - api: XMLHttpRequest
+    source: '\bnew\s+XMLHttpRequest\s*\(|\bnew\s+window\.XMLHttpRequest\s*\('
+  - api: EventSource
+    source: '\bnew\s+EventSource\s*\('
+  - api: navigator.sendBeacon
+    source: '\bnavigator\s*\.\s*sendBeacon\s*\('
+  - api: tls.connect
+    source: '\btls\s*\.\s*connect\s*\('
+  - api: dgram
+    source: '\bdgram\s*\.\s*createSocket\s*\('
+  - api: dns 解析
+    source: '\bdns\s*\.\s*(?:resolve\d?|lookup|resolveTxt|resolveSrv)\s*\('
+  - api: Worker(远程脚本)
+    source: '\bnew\s+(?:Shared)?Worker\s*\(\s*["`](?:https?:)?\/\/'
+  - api: serviceWorker.register
+    source: '\bserviceWorker\s*\.\s*register\s*\('
+  - api: fetch (别名)
+    source: '=\s*(?:window\s*\.\s*)?fetch\s*(?:[;,\n)]|$)'

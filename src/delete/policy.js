@@ -22,14 +22,35 @@
 import { lstatSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { strictestDecision } from '../config.js'
-import { formatBytes, getHomeDir, isWithin, pathKey } from '../util.js'
+import { canonicalizePath, formatBytes, getHomeDir, isWithin, isWithinCanonical, pathKey, samePath } from '../util.js'
 
 /** @typedef {'critical'|'high'|'medium'|'low'} TargetLevel */
 /** @typedef {{ path: string, label: string }} ProtectedRoot */
-/** @typedef {{ criticalExact: ProtectedRoot[], criticalContainers: ProtectedRoot[], highExact: ProtectedRoot[], mediumContainers: ProtectedRoot[], mediumNames: Set<string> }} ProtectedRoots */
+/**
+ * @typedef {object} ProtectedRoots
+ * @property {ProtectedRoot[]} criticalTrees roots whose *descendants* are critical too
+ * @property {ProtectedRoot[]} criticalBoundary roots that are only protected as themselves (or as an ancestor of the root)
+ * @property {ProtectedRoot[]} criticalContainers roots protected in both directions (credential/state stores)
+ * @property {ProtectedRoot[]} criticalExact union of trees + boundary (kept for reporting)
+ * @property {ProtectedRoot[]} highExact
+ * @property {ProtectedRoot[]} mediumContainers
+ * @property {Set<string>} mediumNames
+ */
 
 /**
  * Collect the protected roots for this machine and configuration.
+ *
+ * Three kinds are deliberately distinguished, because "critical" means
+ * different things for them:
+ *
+ *   - **tree** (`C:\Windows`, `Program Files`, `/etc`): the directory and
+ *     everything under it is system material, so a descendant is critical too;
+ *   - **boundary** (`C:\`, `C:\Users`, `/`): only the directory itself (and an
+ *     ancestor of it) is the protected thing. Treating these as trees would
+ *     make every user file critical;
+ *   - **container** (`~/.dsh`, `~/.ssh`): protected in both directions — the
+ *     directory, its contents, and any ancestor that would take it down with it.
+ *
  * @param {any} config
  * @param {{ cwd?: string, platform?: string, env?: Record<string, string|undefined> }} [options]
  * @returns {ProtectedRoots}
@@ -38,11 +59,19 @@ export function buildProtectedRoots(config, options = {}) {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
   const home = getHomeDir()
-  const cwd = resolve(options.cwd ?? process.cwd())
+  // An empty `cwd` means "unknown": do not invent a project root, and do not add
+  // one to the high list. This happens when the host process runs inside the
+  // Harness home (the Desktop app runs from the profile directory).
+  const rawCwd = options.cwd
+  const cwd = typeof rawCwd === 'string' && rawCwd === ''
+    ? ''
+    : resolve(rawCwd ?? process.cwd())
   const dshHome = config?.paths?.dshHome ?? join(home, '.dsh')
 
   /** @type {ProtectedRoot[]} */
-  const criticalExact = []
+  const criticalTrees = []
+  /** @type {ProtectedRoot[]} */
+  const criticalBoundary = []
   /** @type {ProtectedRoot[]} */
   const criticalContainers = []
   /** @type {ProtectedRoot[]} */
@@ -57,16 +86,18 @@ export function buildProtectedRoots(config, options = {}) {
 
   if (platform === 'win32') {
     const systemDrive = env.SystemDrive || home.slice(0, 3)
-    push(criticalExact, systemDrive ? `${systemDrive}\\` : undefined, '系统盘根目录')
-    push(criticalExact, env.SystemRoot || env.WINDIR, 'Windows 系统目录')
-    push(criticalExact, env.ProgramFiles, 'Program Files')
-    push(criticalExact, env['ProgramFiles(x86)'], 'Program Files (x86)')
-    push(criticalExact, env.ProgramData || env.ALLUSERSPROFILE, 'ProgramData')
-    push(criticalExact, env.USERPROFILE ? resolve(env.USERPROFILE, '..') : undefined, '用户目录的上级（C:\\Users）')
-    push(criticalExact, env.PUBLIC ? resolve(env.PUBLIC, '..') : undefined, '公共目录的上级')
+    // System directories: their contents are system files.
+    push(criticalTrees, env.SystemRoot || env.WINDIR, 'Windows 系统目录')
+    push(criticalTrees, env.ProgramFiles, 'Program Files')
+    push(criticalTrees, env['ProgramFiles(x86)'], 'Program Files (x86)')
+    push(criticalTrees, env.ProgramData || env.ALLUSERSPROFILE, 'ProgramData')
+    // Boundaries: deleting them removes every account, but their contents are
+    // ordinary user data (the home directory has its own `high` root).
+    push(criticalBoundary, systemDrive ? `${systemDrive}\\` : undefined, '系统盘根目录')
+    push(criticalBoundary, env.USERPROFILE ? resolve(env.USERPROFILE, '..') : undefined, '用户目录的上级（C:\\Users）')
+    push(criticalBoundary, env.PUBLIC ? resolve(env.PUBLIC, '..') : undefined, '公共目录的上级')
   } else {
     for (const [path, label] of [
-      ['/', '文件系统根目录'],
       ['/etc', '系统配置'],
       ['/usr', '系统程序目录'],
       ['/bin', '系统命令目录'],
@@ -85,9 +116,12 @@ export function buildProtectedRoots(config, options = {}) {
       ['/private', 'macOS 私有目录'],
       ['/Volumes', '挂载卷'],
     ]) {
-      push(criticalExact, path, label)
+      push(criticalTrees, path, label)
     }
-    push(criticalExact, resolve(home, '..'), '用户目录的上级')
+    // `/` itself: deleting it is catastrophic, but every path is under it, so it
+    // must stay a boundary rather than a tree.
+    push(criticalBoundary, '/', '文件系统根目录')
+    push(criticalBoundary, resolve(home, '..'), '用户目录的上级')
   }
 
   for (const [path, label] of [
@@ -104,7 +138,7 @@ export function buildProtectedRoots(config, options = {}) {
   }
 
   push(highExact, home, '用户主目录')
-  if (config?.deleteGuard?.includeProjectRootAsHigh !== false) push(highExact, cwd, '当前项目根目录')
+  if (config?.deleteGuard?.includeProjectRootAsHigh !== false && cwd !== '') push(highExact, cwd, '当前项目根目录')
 
   for (const [path, label] of [
     [join(home, 'Downloads'), '下载目录'],
@@ -121,8 +155,10 @@ export function buildProtectedRoots(config, options = {}) {
   for (const raw of config?.deleteGuard?.extraHighRoots ?? []) push(highExact, raw, '用户配置的高风险保护根')
 
   return {
-    criticalExact: dedupeRoots(criticalExact),
+    criticalTrees: dedupeRoots(criticalTrees),
+    criticalBoundary: dedupeRoots(criticalBoundary),
     criticalContainers: dedupeRoots(criticalContainers),
+    criticalExact: dedupeRoots([...criticalTrees, ...criticalBoundary]),
     highExact: dedupeRoots(highExact),
     mediumContainers: dedupeRoots(mediumContainers),
     mediumNames: new Set(['node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'target', 'venv', '.venv']),
@@ -148,31 +184,45 @@ function dedupeRoots(roots) {
 
 /**
  * Classify one resolved target.
+ *
+ * Comparison is canonical: `~`, `%VAR%`, `$env:VAR`, 8.3 short names,
+ * junctions and `\\?\` prefixes all resolve to the same protected root before
+ * the level is decided, so an agent cannot rename the protection away at the
+ * string level.
+ *
  * @param {string} targetPath absolute path
  * @param {ProtectedRoots} roots
  * @returns {{ level: TargetLevel, label: string }}
  */
 export function classifyPath(targetPath, roots) {
-  const key = pathKey(targetPath)
-  for (const root of roots.criticalExact) {
-    if (key === pathKey(root.path) || isWithin(targetPath, root.path)) {
+  if (typeof targetPath !== 'string' || targetPath.trim() === '') {
+    return { level: 'low', label: '普通路径' }
+  }
+  for (const root of roots.criticalTrees ?? []) {
+    if (isWithinCanonical(root.path, targetPath)) return { level: 'critical', label: root.label }
+  }
+  for (const root of roots.criticalBoundary ?? []) {
+    if (samePath(root.path, targetPath) || isWithinCanonical(targetPath, root.path)) {
       return { level: 'critical', label: root.label }
     }
   }
-  for (const root of roots.criticalContainers) {
-    if (key === pathKey(root.path) || isWithin(root.path, targetPath) || isWithin(targetPath, root.path)) {
+  for (const root of roots.criticalContainers ?? []) {
+    if (samePath(root.path, targetPath)
+      || isWithinCanonical(root.path, targetPath)
+      || isWithinCanonical(targetPath, root.path)) {
       return { level: 'critical', label: root.label }
     }
   }
-  for (const root of roots.highExact) {
-    if (key === pathKey(root.path)) return { level: 'high', label: root.label }
+  for (const root of roots.highExact ?? []) {
+    if (samePath(root.path, targetPath)) return { level: 'high', label: root.label }
   }
-  for (const root of roots.mediumContainers) {
-    if (key === pathKey(root.path) || isWithin(root.path, targetPath)) {
+  for (const root of roots.mediumContainers ?? []) {
+    if (samePath(root.path, targetPath) || isWithinCanonical(root.path, targetPath)) {
       return { level: 'medium', label: root.label }
     }
   }
-  if (roots.mediumNames.has(basename(targetPath).toLowerCase())) {
+  const name = basename(canonicalizePath(targetPath)).toLowerCase()
+  if (roots.mediumNames?.has(name)) {
     return { level: 'medium', label: `高频大目录 ${basename(targetPath)}` }
   }
   return { level: 'low', label: '普通路径' }
@@ -260,13 +310,32 @@ export function estimateScale(root, limits) {
 }
 
 /**
+ * Cheap "is this a regular file, and how big is it" probe used when a call has a
+ * single non-recursive target: directory walks are expensive, one lstat is not.
+ * @param {string} targetPath
+ * @returns {{ isFile: boolean, bytes: number }}
+ */
+export function estimateFile(targetPath) {
+  try {
+    const stat = lstatSync(targetPath)
+    if (stat.isFile()) return { isFile: true, bytes: stat.size }
+  } catch {
+    // missing target: nothing to meter
+  }
+  return { isFile: false, bytes: 0 }
+}
+
+/**
  * Create the deletion policy facade for one activation.
  * @param {any} config
  * @param {{ quarantine?: any, logger?: { warn?: (message: string) => void }, cwd?: string, platform?: string, env?: Record<string, string|undefined> }} [options]
  * @returns {DeletePolicy}
  */
 export function createDeletePolicy(config, options = {}) {
-  const cwd = resolve(options.cwd ?? process.cwd())
+  const rawCwd = options.cwd
+  const cwd = typeof rawCwd === 'string' && rawCwd === ''
+    ? ''
+    : resolve(rawCwd ?? process.cwd())
   const roots = buildProtectedRoots(config, {
     cwd,
     platform: options.platform,
@@ -353,25 +422,50 @@ export function createDeletePolicy(config, options = {}) {
       reasons.push('无法可靠解析删除目标，按不可信处理')
       kind = strictestDecision(kind, normalizeAction(config?.deleteGuard?.unknownTarget, 'ask'))
     }
+    if (intent.deleteKind === 'truncate') {
+      reasons.push('该命令会清空或覆盖文件原有内容（截断写入）')
+    }
 
-    const shouldEstimate = (intent.recursive || intent.wildcard || targets.length > 1)
-      && targets.every(target => target.level !== 'critical')
     const quarantineDir = config?.paths?.quarantineDir
-    if (shouldEstimate) {
-      const scalars = targets
-        .filter(target => target.resolvedPath && target.level !== 'critical'
-          && !(quarantineDir && isWithin(quarantineDir, /** @type {string} */ (target.resolvedPath))))
-        .map(target => estimateScale(/** @type {string} */ (target.resolvedPath), {
-          maxFiles: thresholds.maxFiles,
-          maxBytes: thresholds.maxBytes,
-          cap: thresholds.perCallMaxFiles,
-        }))
+    // A deletion whose targets come from a pipeline (`Get-ChildItem … |
+    // Remove-Item`) has the same blast radius as a wildcard even when the
+    // command carries no `-Recurse`: measure it and ask like a wildcard.
+    const pipelineLike = Array.isArray(intent.riskSignals) && intent.riskSignals.includes('pipeline-generic')
+    const measurable = target => Boolean(target.resolvedPath)
+      && target.level !== 'critical'
+      && !(quarantineDir && isWithin(quarantineDir, /** @type {string} */ (target.resolvedPath)))
+    const shouldWalk = (intent.recursive || intent.wildcard || pipelineLike || targets.length > 1)
+      && targets.every(target => target.level !== 'critical')
+    if (shouldWalk) {
+      const scalars = targets.filter(measurable).map(target => estimateScale(/** @type {string} */ (target.resolvedPath), {
+        maxFiles: thresholds.maxFiles,
+        maxBytes: thresholds.maxBytes,
+        cap: thresholds.perCallMaxFiles,
+      }))
       scale = {
         files: scalars.reduce((sum, item) => sum + item.files, 0),
         bytes: scalars.reduce((sum, item) => sum + item.bytes, 0),
         filesAtLeast: scalars.some(item => item.filesAtLeast),
         bytesAtLeast: scalars.some(item => item.bytesAtLeast),
       }
+    } else {
+      // One literal file still counts: a 5 GiB file exceeds maxBytes even though
+      // it is "a single file", and repeated single-file deletes must accumulate
+      // toward the session threshold instead of escaping it forever.
+      const files = targets
+        .filter(measurable)
+        .map(target => estimateFile(/** @type {string} */ (target.resolvedPath)))
+        .filter(item => item.isFile)
+      if (files.length > 0) {
+        scale = {
+          files: files.length,
+          bytes: files.reduce((sum, item) => sum + item.bytes, 0),
+          filesAtLeast: false,
+          bytesAtLeast: false,
+        }
+      }
+    }
+    if (scale) {
       const exceeds = scale.files > thresholds.maxFiles || scale.bytes > thresholds.maxBytes
       if (exceeds) {
         ruleIds.push('VG-DEL-03')
@@ -426,6 +520,11 @@ export function createDeletePolicy(config, options = {}) {
       reasons.push('robocopy /MIR 会删除目标端多余文件')
       kind = strictestDecision(kind, normalizeAction(config?.deleteGuard?.recursive, 'ask'))
     }
+    if (pipelineLike) {
+      ruleIds.push('VG-DEL-10')
+      reasons.push('删除目标来自管道上游，可能一次删除整批文件')
+      kind = strictestDecision(kind, normalizeAction(config?.deleteGuard?.wildcard, 'ask'))
+    }
 
     // Reversible deletion only for decisions that actually block the command,
     // and only for literal single targets: a wildcard target can never be moved
@@ -437,6 +536,7 @@ export function createDeletePolicy(config, options = {}) {
     if (kind === 'deny' && config?.mode === 'enforce' && options.quarantine?.enabled) {
       const capturable = targets.filter(target =>
         target.resolvedPath
+        && intent.deleteKind !== 'truncate'
         && !target.hasGlob
         && !target.rootLike
         && (target.level === 'low' || target.level === 'medium')
@@ -499,7 +599,8 @@ export function createDeletePolicy(config, options = {}) {
     describeRoots() {
       /** @type {string[]} */
       const lines = []
-      for (const root of roots.criticalExact) lines.push(`critical(精确/上级): ${root.path} — ${root.label}`)
+      for (const root of roots.criticalTrees) lines.push(`critical(目录树): ${root.path} — ${root.label}`)
+      for (const root of roots.criticalBoundary) lines.push(`critical(边界): ${root.path} — ${root.label}`)
       for (const root of roots.criticalContainers) lines.push(`critical(内部): ${root.path} — ${root.label}`)
       for (const root of roots.highExact) lines.push(`high: ${root.path} — ${root.label}`)
       for (const root of roots.mediumContainers) lines.push(`medium: ${root.path} — ${root.label}`)

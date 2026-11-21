@@ -13,7 +13,8 @@
  */
 
 import { basename } from 'node:path'
-import { isWithin, scrubHome, truncate } from '../util.js'
+import { isWithin, resolvePath, scrubHome, truncate } from '../util.js'
+import { getRulePack } from '../rules/pack.js'
 
 /**
  * @typedef {object} RuleFinding
@@ -23,23 +24,23 @@ import { isWithin, scrubHome, truncate } from '../util.js'
  * @property {string} [evidence]
  */
 
-/** Credential-shaped path fragments. Deliberately narrow to limit noise. */
-const CREDENTIAL_PATTERNS = Object.freeze([
-  { pattern: /(?:^|[\\/\s"'=])\.ssh(?:[\\/\s"']|$)/i, label: 'SSH 目录' },
-  { pattern: /\bid_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?\b/i, label: 'SSH 私钥' },
-  { pattern: /\.aws[\\/](?:credentials|config)\b/i, label: 'AWS 凭据文件' },
-  { pattern: /\.git-credentials\b/i, label: 'Git 凭据文件' },
-  { pattern: /\.npmrc\b/i, label: 'npm 凭据文件' },
-  { pattern: /\.gnupg\b/i, label: 'GPG 密钥目录' },
-  { pattern: /\b(?:Login Data|key4\.db|logins\.json|cookies\.sqlite)\b/i, label: '浏览器凭据库' },
-  { pattern: /\.(?:pem|p12|pfx)\b/i, label: '证书/私钥文件' },
-  { pattern: /(?:^|[\\/\s"'=])\.env(?:\.[\w-]+)?(?:[\\/\s"']|$)/i, label: '.env 环境变量文件' },
-  { pattern: /(?:^|[\\/\s"'=])\.netrc\b/i, label: '.netrc 凭据文件' },
-])
+/**
+ * Credential-shaped path fragments, loaded from the rule pack so the data can
+ * be updated without shipping a new plugin (`rules/sentinel.yaml`).
+ * @returns {Array<{ pattern: RegExp, label: string }>}
+ */
+function credentialPatterns() {
+  return getRulePack().sentinel.credentialPatterns.map(item => ({ pattern: item.re, label: item.label ?? item.source }))
+}
+
+/** @returns {RegExp|null} */
+function persistencePattern() {
+  return getRulePack().sentinel.persistence[0]?.re ?? null
+}
 
 /** Network-client invocations that can upload data. */
 const NETWORK_CLIENT = /\b(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|Start-BitsTransfer|scp|sftp|rsync|ftp)\b/i
-const UPLOAD_FLAG = /(?:^|\s)(?:-d|--data(?:-binary|-raw)?|-F|--form|-T|--upload-file|-X\s*(?:POST|PUT)|--post-data|--post-file)\b/i
+const UPLOAD_FLAG = /(?:^|\s)(?:-d|--data(?:-binary|-raw)?|-F|--form|-T|--upload-file|-X\s*(?:POST|PUT)|--post-data|--post-file|-method\s+(?:post|put)|-infile(?:[:\s]|$)|-body(?:[:\s]|$))\b/i
 const DOWNLOAD_TO_SHELL = /\b(?:curl|wget|Invoke-WebRequest|iwr|Start-BitsTransfer)\b[\s\S]{0,400}?\|\s*(?:sh|bash|zsh|dash|fish|python[0-9.]*|node|perl|ruby|iex|Invoke-Expression)\b/i
 const DOWNLOAD_INVOKE = /(?:DownloadString|DownloadData|DownloadFile)\s*\(|Invoke-Expression|\biex\b/i
 /**
@@ -48,7 +49,6 @@ const DOWNLOAD_INVOKE = /(?:DownloadString|DownloadData|DownloadFile)\s*\(|Invok
  * `node -e ...` a false positive.
  */
 const ENCODED_COMMAND = /(?:^|\s)(?:-enc|-encodedcommand|--encoded-command)\b|\bFromBase64String\b|\bbase64\s+(?:-d|--decode|-D)\b/i
-const PERSISTENCE = /(?:\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile|Microsoft[\\/]Windows[\\/]Start Menu[\\/]Programs[\\/]Startup|HKCU[\\/:]Software[\\/]Microsoft[\\/]Windows[\\/]CurrentVersion[\\/]Run|HKEY_CURRENT_USER[\\/]Software[\\/]Microsoft[\\/]Windows[\\/]CurrentVersion[\\/]Run|\\\\CurrentVersion\\\\Run\b|launchd|systemd\/system|ScheduledTasks)/i
 const WRITE_VERB = /\b(?:Set-Content|Add-Content|Out-File|New-Item|echo|printf|tee|sed\s+-i|>\s|>>\s|copy\b|Copy-Item|mkdir|New-ItemProperty|Set-ItemProperty|reg\s+add|Invoke-Expression)\b/i
 /** Verbs that destroy or relocate configuration without writing new content. */
 const DESTRUCTIVE_COMMAND = /\b(?:rm|rmdir|del|erase|rd|Remove-Item|mv|Move-Item|ren|Rename-Item)\b/i
@@ -184,15 +184,26 @@ export function inspectToolCall(exec, config, context) {
   /** @param {RuleFinding} finding */
   const add = finding => findings.push(finding)
 
+  /** Resolve one argument path against the effective working directory. */
+  const resolveForCheck = value => {
+    try {
+      return resolvePath(String(value), context.cwd)
+    } catch {
+      return ''
+    }
+  }
+
   const isShell = SHELL_TOOL.test(toolName)
   const isWrite = WRITE_TOOL.test(toolName)
   const isDelete = DELETE_TOOL.test(toolName)
   const isManager = MANAGER_TOOL.test(toolName)
   const isWeb = WEB_TOOL.test(toolName)
+  const credentialRules = credentialPatterns()
+  const persistenceRule = persistencePattern()
 
   // ---- VG-RT-01: credential material is touched ---------------------------
   if (sentinel.credentialReads !== 'allow' && accessText !== '') {
-    const hits = CREDENTIAL_PATTERNS.filter(item => item.pattern.test(accessText))
+    const hits = credentialRules.filter(item => item.pattern.test(accessText))
     if (hits.length > 0) {
       const labels = hits.map(hit => hit.label).join('、')
       add({
@@ -206,8 +217,12 @@ export function inspectToolCall(exec, config, context) {
 
   // ---- VG-RT-02: credentials leave the machine ----------------------------
   if (sentinel.credentialExfil !== 'allow') {
-    const touchesCredential = CREDENTIAL_PATTERNS.some(item => item.pattern.test(accessText))
-    if (touchesCredential && NETWORK_CLIENT.test(command ?? accessText) && (UPLOAD_FLAG.test(command ?? '') || /\|\s*(?:sh|bash)\b/i.test(command ?? ''))) {
+    const touchesCredential = credentialRules.some(item => item.pattern.test(accessText))
+    const exfilMechanism = UPLOAD_FLAG.test(command ?? '')
+      || /\|\s*(?:sh|bash)\b/i.test(command ?? '')
+      // scp/sftp copy the file to another host without an explicit upload flag.
+      || /\b(?:scp|sftp)\b/i.test(command ?? '')
+    if (touchesCredential && NETWORK_CLIENT.test(command ?? accessText) && exfilMechanism) {
       add({
         ruleId: 'VG-RT-02',
         kind: sentinel.credentialExfil === 'deny' ? 'deny' : 'ask',
@@ -268,26 +283,27 @@ export function inspectToolCall(exec, config, context) {
   // ---- VG-RT-07: dsh configuration tampering ------------------------------
   if (sentinel.configTamper !== 'allow' && dshHome) {
     const configNames = /\b(?:cordis\.patch\.yml|cordis\.yml|cordis\.yaml|settings\.json|permission-presets|sandbox-policy)\b/i
-    const touchesDshConfig = paths.some(path => {
-      const resolved = path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) ? path : `${context.cwd}\\${path}`
-      return isWithin(dshHome, resolved)
-    })
+    const touchesDshConfig = paths.some(path => isWithin(dshHome, resolveForCheck(path)))
     const commandMutates = typeof command === 'string' && (WRITE_VERB.test(command) || DESTRUCTIVE_COMMAND.test(command))
     const commandTargetsProfile = Boolean(command) && configNames.test(/** @type {string} */ (command))
       && commandMutates
       && (/** @type {string} */ (command).includes(dshHome) || /profiles[\\/]/.test(/** @type {string} */ (command)) || /\.dsh\b/.test(/** @type {string} */ (command)))
-    const writesPrivilegedConfig = combinedText.includes(dshHome) && configNames.test(combinedText) && (isWrite || isDelete || WRITE_VERB.test(command ?? ''))
+    // Only the *access* text counts: a document that merely mentions a config
+    // path in its body is data, not a mutation of that path.
+    const writesPrivilegedConfig = accessText.includes(dshHome)
+      && configNames.test(accessText)
+      && (isWrite || isDelete || commandMutates)
     if ((isManager && /\b(?:config|patch|apply|set)\b/i.test(JSON.stringify(args))) || touchesDshConfig && (isWrite || isDelete) || commandTargetsProfile || writesPrivilegedConfig) {
       // Editing a project's own package.json must stay allowed; only dsh's own
       // profile configuration is protected.
-      const pathInDsh = paths.some(path => isWithin(dshHome, path))
+      const pathInDsh = paths.some(path => isWithin(dshHome, resolveForCheck(path)))
       const onlyProjectPackage = !pathInDsh && !commandTargetsProfile && !writesPrivilegedConfig
       if (!onlyProjectPackage) {
         add({
           ruleId: 'VG-RT-07',
           kind: sentinel.configTamper === 'deny' ? 'deny' : 'ask',
           reason: '该调用会修改 dsh 的配置、沙箱或审批策略，dsh-vigil 不允许代理自行改动安全配置',
-          evidence: evidence(combinedText),
+          evidence: evidence(accessText),
         })
       }
     }
@@ -312,7 +328,7 @@ export function inspectToolCall(exec, config, context) {
   }
 
   // ---- VG-RT-09: persistence writes ---------------------------------------
-  if (sentinel.persistenceWrites !== 'allow' && (isWrite || isShell || isDelete) && PERSISTENCE.test(accessText)) {
+  if (sentinel.persistenceWrites !== 'allow' && (isWrite || isShell || isDelete) && persistenceRule?.test(accessText)) {
     add({
       ruleId: 'VG-RT-09',
       kind: sentinel.persistenceWrites === 'deny' ? 'deny' : 'ask',
@@ -331,14 +347,48 @@ export function inspectToolCall(exec, config, context) {
     })
   }
 
-  // ---- VG-RT-11: dsh-vigil state tampering --------------------------------
-  if (quarantineDir && (isDelete || isWrite || isShell) && combinedText.includes(quarantineDir)) {
+  // ---- VG-RT-13: forced move silently overwrites the destination ----------
+  if (isShell && typeof command === 'string'
+    && /\b(?:Move-Item|mv|move)\b[^\n;|&]*?\s(?:-Force|-f)\b/i.test(command)) {
     add({
-      ruleId: 'VG-RT-11',
-      kind: 'deny',
-      reason: '该调用会改动隔离区内容（恢复/永久删除请使用 vigil_quarantine 工具）',
-      evidence: evidence(combinedText),
+      ruleId: 'VG-RT-13',
+      kind: 'ask',
+      reason: '移动并强制覆盖目标位置会静默销毁目标原有内容',
+      evidence: evidence(command),
     })
+  }
+
+  // ---- VG-RT-12: Windows device path target --------------------------------
+  // `Move-Item x -Destination \\.\NUL` (or CON/COM1/…) destroys data without
+  // showing up as a delete; treat any device-path target as a denial.
+  if (isShell || isWrite || isDelete) {
+    const device = /(?:^|[\s'"=])\\\\\.\\(?:NUL|CON|AUX|PRN|COM[1-9]|LPT[1-9])\b/i.exec(accessText)
+    if (device) {
+      add({
+        ruleId: 'VG-RT-12',
+        kind: 'deny',
+        reason: '目标指向 Windows 设备路径（如 \\\\.\\NUL），写入/移动会直接销毁数据',
+        evidence: evidence(device[0]),
+      })
+    }
+  }
+
+  // ---- VG-RT-11: dsh-vigil state tampering --------------------------------
+  // Reads are allowed: inspecting the quarantine (manifest, size) is legitimate.
+  // Only a call that *targets* the quarantine with a write/delete is denied.
+  if (quarantineDir) {
+    const pathInQuarantine = paths.some(path => isWithin(quarantineDir, resolveForCheck(path)))
+    const shellMutatesQuarantine = isShell && typeof command === 'string'
+      && (WRITE_VERB.test(command) || DESTRUCTIVE_COMMAND.test(command))
+      && command.includes(quarantineDir)
+    if (((isDelete || isWrite) && pathInQuarantine) || shellMutatesQuarantine) {
+      add({
+        ruleId: 'VG-RT-11',
+        kind: 'deny',
+        reason: '该调用会改动隔离区内容（恢复/永久删除请使用 vigil_quarantine 工具）',
+        evidence: evidence(accessText),
+      })
+    }
   }
 
   const ruleIds = [...new Set(findings.map(finding => finding.ruleId))]

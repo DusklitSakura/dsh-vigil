@@ -20,8 +20,8 @@
  */
 
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
-import { atomicWriteJson, ensureDir, formatBytes, nowIso, randomId, readJson, sha256 } from '../util.js'
+import { basename, dirname, isAbsolute, join } from 'node:path'
+import { atomicWriteJson, ensureDir, formatBytes, isWithin, nowIso, randomId, readJson, sha256 } from '../util.js'
 
 /**
  * Bound for the cross-volume fallback: a directory on another volume is copied
@@ -31,6 +31,12 @@ import { atomicWriteJson, ensureDir, formatBytes, nowIso, randomId, readJson, sh
  */
 const CROSS_VOLUME_MAX_FILES = 5000
 const CROSS_VOLUME_MAX_BYTES = 512 * 1024 * 1024
+
+/**
+ * Entry ids are directory names: they must never contain a separator, so a
+ * manifest cannot redirect `join(dir, id)` outside the quarantine.
+ */
+const ENTRY_ID_RE = /^q-[A-Za-z0-9._-]+$/
 
 /** @typedef {'file'|'directory'} EntryKind */
 
@@ -171,11 +177,14 @@ export function createQuarantine(config, logger) {
       return []
     }
     for (const name of names) {
-      if (!name.startsWith('q-')) continue
+      if (!name.startsWith('q-') || !ENTRY_ID_RE.test(name)) continue
       const manifestFile = join(dir, name, config?.quarantine?.metadataFile || 'manifest.json')
       const manifest = readJson(manifestFile)
       if (manifest && typeof manifest === 'object' && typeof manifest.id === 'string') {
-        found.push(/** @type {QuarantineEntry} */ (manifest))
+        // The directory name is authoritative: a manifest cannot point the
+        // entry id (and therefore the recursive delete on purge/restore) at
+        // another path such as `q-evil/../../victim`.
+        found.push(/** @type {QuarantineEntry} */ ({ ...manifest, id: name }))
       }
     }
     return found.sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
@@ -185,35 +194,42 @@ export function createQuarantine(config, logger) {
    * Move one entry back to its original path.
    * @param {string} id
    * @param {{ force?: boolean }} [options]
-   * @returns {{ ok: boolean, restoredTo?: string, error?: string }}
+   * @returns {{ ok: boolean, restoredTo?: string, conflictPath?: string, error?: string }}
    */
   function restore(id, options = {}) {
     if (!enabled || !ready) return { ok: false, error: '隔离区未启用' }
+    if (!ENTRY_ID_RE.test(String(id ?? ''))) return { ok: false, error: `隔离区条目 id 不合法：${String(id)}` }
     const entry = entries().find(item => item.id === id)
     if (!entry) return { ok: false, error: `未找到隔离区条目 ${id}` }
-    const entryDir = join(dir, entry.id)
-    const payloadFile = join(entryDir, 'payload', basename(entry.originalPath) || 'payload')
+    const originalPath = typeof entry.originalPath === 'string' ? entry.originalPath : ''
+    if (!isAbsolute(originalPath)) return { ok: false, error: '清单缺少可用的原始路径' }
+    const payloadFile = join(dir, entry.id, 'payload', basename(originalPath) || 'payload')
+    if (!isWithin(dir, payloadFile)) return { ok: false, error: '清单的原始路径与条目不一致' }
+    if (isWithin(dir, originalPath)) return { ok: false, error: '原始路径位于隔离区内部，拒绝恢复' }
     if (!existsSync(payloadFile)) return { ok: false, error: '隔离区载荷缺失，可能已被手动删除' }
-    if (existsSync(entry.originalPath) && !options.force) {
-      return { ok: false, error: `原路径已被占用：${entry.originalPath}（使用 force 覆盖）` }
+    /** @type {string|null} */
+    let conflictPath = null
+    if (existsSync(originalPath) && !options.force) {
+      return { ok: false, error: `原路径已被占用：${originalPath}（使用 force 覆盖）` }
     }
-    if (existsSync(entry.originalPath) && options.force) {
-      // Never destroy what is already there silently: move it aside first.
-      const aside = `${entry.originalPath}.vigil-conflict-${Date.now()}`
+    if (existsSync(originalPath) && options.force) {
+      // Never destroy what is already there silently: move it aside first and
+      // report where it went, so it can be recovered.
+      conflictPath = `${originalPath}.vigil-conflict-${Date.now()}`
       try {
-        renameSync(entry.originalPath, aside)
+        renameSync(originalPath, conflictPath)
       } catch (error) {
         return { ok: false, error: `无法让位原路径：${String(error)}` }
       }
     }
-    ensureDir(dirname(entry.originalPath))
+    ensureDir(dirname(originalPath))
     try {
-      movePath(payloadFile, entry.originalPath, entry.kind)
+      movePath(payloadFile, originalPath, entry.kind)
     } catch (error) {
-      return { ok: false, error: `恢复失败：${error instanceof Error ? error.message : String(error)}` }
+      return { ok: false, error: `恢复失败：${error instanceof Error ? error.message : String(error)}`, conflictPath: conflictPath ?? undefined }
     }
-    removeEntryDir(entryDir)
-    return { ok: true, restoredTo: entry.originalPath }
+    removeEntryDir(join(dir, entry.id))
+    return { ok: true, restoredTo: originalPath, ...(conflictPath ? { conflictPath } : {}) }
   }
 
   /**
@@ -226,10 +242,13 @@ export function createQuarantine(config, logger) {
   function purge(id, options = {}) {
     if (!enabled || !ready) return { ok: false, error: '隔离区未启用' }
     if (options.confirm !== true) return { ok: false, error: '永久删除需要二次确认：请传 confirm=true' }
+    if (!ENTRY_ID_RE.test(String(id ?? ''))) return { ok: false, error: `隔离区条目 id 不合法：${String(id)}` }
     const entry = entries().find(item => item.id === id)
     if (!entry) return { ok: false, error: `未找到隔离区条目 ${id}` }
+    const entryDir = join(dir, entry.id)
+    if (!isWithin(dir, entryDir)) return { ok: false, error: '隔离区条目路径异常' }
     try {
-      rmSync(join(dir, entry.id), { recursive: true, force: true })
+      rmSync(entryDir, { recursive: true, force: true })
       return { ok: true }
     } catch (error) {
       return { ok: false, error: `永久删除失败：${String(error)}` }

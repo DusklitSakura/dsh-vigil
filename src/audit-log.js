@@ -18,8 +18,9 @@
  * @module dsh-vigil/audit-log
  */
 
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { atomicWriteJson, ensureDir, formatBytes, nowIso, readJson, scrubHome, sha256, stableStringify, truncate } from './util.js'
 
 /** Current on-disk record schema version. */
@@ -28,6 +29,16 @@ export const AUDIT_SCHEMA_VERSION = 1
 /** Trade-off: good enough to spot tampering, cheap enough to run per call. */
 const STATE_FILE = 'state.json'
 const FILE_PATTERN = /^audit-(\d{6})\.jsonl$/
+
+/** Constant-time comparison for the anchor MAC. */
+function macEquals(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string' || left.length !== right.length) return false
+  try {
+    return timingSafeEqual(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+  } catch {
+    return false
+  }
+}
 
 /**
  * Redact values that look like credentials so the audit log itself never
@@ -145,6 +156,20 @@ export function createAuditLog(config, logger) {
   let maxBytes = Number(config?.auditLog?.maxBytes) || 8388608
   let maxFiles = Math.max(1, Number(config?.auditLog?.maxFiles) || 5)
   const warnings = []
+  // Optional HMAC anchor over the chain head. The key comes from the
+  // environment: a key stored next to the log would be rewritten with it.
+  const anchorEnabled = config?.auditLog?.anchor?.enabled === true
+  const anchorKeyEnv = typeof config?.auditLog?.anchor?.keyEnv === 'string' && config.auditLog.anchor.keyEnv.trim() !== ''
+    ? config.auditLog.anchor.keyEnv.trim()
+    : 'DSH_VIGIL_ANCHOR_KEY'
+  const anchorEveryN = Math.max(1, Number(config?.auditLog?.anchor?.everyN) || 100)
+  const anchorFile = typeof config?.auditLog?.anchor?.file === 'string' && config.auditLog.anchor.file.trim() !== ''
+    ? config.auditLog.anchor.file.trim()
+    : join(dir, 'anchor.json')
+  const anchorKey = () => {
+    const value = process.env[anchorKeyEnv]
+    return typeof value === 'string' ? value : ''
+  }
 
   /** @type {{ seq: number, lastHash: string, count: number, updatedAt: string }} */
   let state = { seq: 0, lastHash: '', count: 0, updatedAt: '' }
@@ -189,6 +214,7 @@ export function createAuditLog(config, logger) {
       appendLine(dir, Math.floor((body.seq - 1) / 2000) + 1, line, maxBytes, maxFiles)
       state = { seq: body.seq, lastHash: hash, count: state.count + 1, updatedAt: body.ts }
       persistState(dir, state)
+      if (anchorEnabled) writeAnchor(body.seq, hash)
       return { seq: body.seq, hash }
     } catch (error) {
       // Logging must never break a decision path; report once per activation.
@@ -198,6 +224,104 @@ export function createAuditLog(config, logger) {
       }
       return null
     }
+  }
+
+  /**
+   * Write the HMAC anchor for the current chain head. Only the key from the
+   * environment can make the anchor trustworthy: a key stored beside the log
+   * would be rewritten together with it.
+   * @param {number} seq
+   * @param {string} hash
+   * @returns {void}
+   */
+  function writeAnchor(seq, hash) {
+    try {
+      const key = anchorKey()
+      if (key === '') return
+      const existing = readJson(anchorFile)
+      // Always establish the first anchor; afterwards follow the interval.
+      if (existing && Number(existing.seq) > 0 && seq % anchorEveryN !== 0) return
+      const at = nowIso()
+      const mac = createHmac('sha256', key).update(`${seq}\n${hash}\n${at}`).digest('hex')
+      ensureDir(dirname(anchorFile))
+      if (!atomicWriteJson(anchorFile, { v: 1, alg: 'HMAC-SHA256', seq, hash, at, keyEnv: anchorKeyEnv, mac })) {
+        throw new Error('无法写入锚点文件')
+      }
+    } catch (error) {
+      if (!warnings.includes('anchor-write-failed')) {
+        warnings.push('anchor-write-failed')
+        logger?.warn?.(`[dsh-vigil] 无法写入审计锚点：${String(error)}`)
+      }
+    }
+  }
+
+  /**
+   * @returns {{ ok: boolean, entries: number, firstBad: object|null, reason: string|null }}
+   */
+  function verifyChain() {
+    const files = listFiles(dir)
+    let previousHash = ''
+    let entries = 0
+    let expectedSeq = 1
+    for (const file of files) {
+      let raw = ''
+      try {
+        raw = readFileSync(join(dir, file), 'utf8')
+      } catch {
+        continue
+      }
+      for (const line of raw.split('\n')) {
+        if (line.trim() === '') continue
+        try {
+          const parsed = JSON.parse(line)
+          const { hash, ...body } = parsed
+          entries += 1
+          if (body.seq !== expectedSeq) {
+            return { ok: false, entries, firstBad: { seq: body.seq, file }, reason: `序号不连续：期望 ${expectedSeq}` }
+          }
+          if (body.prev !== previousHash) {
+            return { ok: false, entries, firstBad: { seq: body.seq, file }, reason: '前序哈希不匹配（记录被删除或重排）' }
+          }
+          if (sha256(`${body.prev}\n${stableStringify(body)}`) !== hash) {
+            return { ok: false, entries, firstBad: { seq: body.seq, file }, reason: '记录哈希不匹配（内容被改写）' }
+          }
+          previousHash = hash
+          expectedSeq += 1
+        } catch {
+          return { ok: false, entries, firstBad: { seq: expectedSeq, file }, reason: '记录不是合法 JSON' }
+        }
+      }
+    }
+    return { ok: true, entries, firstBad: null, reason: null }
+  }
+
+  /**
+   * Verify the HMAC anchor against the chain: the MAC must be valid, the anchor
+   * must not point past the head (rollback), and the record at that seq must
+   * carry the anchored hash.
+   * @returns {{ enabled: boolean, state: string, seq?: number, headSeq?: number, error?: string }}
+   */
+  function verifyAnchor() {
+    if (!anchorEnabled) return { enabled: false, state: 'disabled' }
+    const key = anchorKey()
+    if (key === '') return { enabled: true, state: 'no-key', error: `环境变量 ${anchorKeyEnv} 未设置` }
+    const raw = readJson(anchorFile)
+    if (!raw || typeof raw !== 'object') {
+      return { enabled: true, state: existsSync(anchorFile) ? 'corrupt' : 'missing' }
+    }
+    const seq = Number(raw.seq)
+    if (!Number.isFinite(seq) || seq < 1 || typeof raw.hash !== 'string' || typeof raw.mac !== 'string') {
+      return { enabled: true, state: 'corrupt' }
+    }
+    const expected = createHmac('sha256', key).update(`${seq}\n${raw.hash}\n${raw.at}`).digest('hex')
+    if (!macEquals(expected, raw.mac)) return { enabled: true, state: 'bad-mac', seq }
+    const records = readAllRecords(dir)
+    const headSeq = Number(records[records.length - 1]?.seq) || 0
+    if (seq > headSeq) return { enabled: true, state: 'ahead', seq, headSeq }
+    const anchored = records.find(item => item.seq === seq)
+    if (!anchored) return { enabled: true, state: 'gap', seq, headSeq }
+    if (anchored.hash !== raw.hash) return { enabled: true, state: 'mismatch', seq, headSeq }
+    return { enabled: true, state: 'ok', seq, headSeq }
   }
 
   /**
@@ -398,40 +522,18 @@ export function createAuditLog(config, logger) {
      * @returns {{ ok: boolean, entries: number, firstBad: object|null, reason: string|null }}
      */
     verify() {
-      const files = listFiles(dir)
-      let previousHash = ''
-      let entries = 0
-      let expectedSeq = 1
-      for (const file of files) {
-        let raw = ''
-        try {
-          raw = readFileSync(join(dir, file), 'utf8')
-        } catch {
-          continue
-        }
-        for (const line of raw.split('\n')) {
-          if (line.trim() === '') continue
-          try {
-            const parsed = JSON.parse(line)
-            const { hash, ...body } = parsed
-            entries += 1
-            if (body.seq !== expectedSeq) {
-              return { ok: false, entries, firstBad: { seq: body.seq, file }, reason: `序号不连续：期望 ${expectedSeq}` }
-            }
-            if (body.prev !== previousHash) {
-              return { ok: false, entries, firstBad: { seq: body.seq, file }, reason: '前序哈希不匹配（记录被删除或重排）' }
-            }
-            if (sha256(`${body.prev}\n${stableStringify(body)}`) !== hash) {
-              return { ok: false, entries, firstBad: { seq: body.seq, file }, reason: '记录哈希不匹配（内容被改写）' }
-            }
-            previousHash = hash
-            expectedSeq += 1
-          } catch {
-            return { ok: false, entries, firstBad: { seq: expectedSeq, file }, reason: '记录不是合法 JSON' }
-          }
-        }
+      const chain = verifyChain()
+      const anchor = verifyAnchor()
+      const anchorFails = anchor.enabled && (
+        ['bad-mac', 'mismatch', 'ahead', 'gap', 'corrupt', 'no-key'].includes(anchor.state)
+        || (anchor.state === 'missing' && chain.entries > 0)
+      )
+      return {
+        ...chain,
+        ok: chain.ok && !anchorFails,
+        reason: chain.reason ?? (anchorFails ? `审计锚点校验失败：${anchor.state}` : null),
+        anchor,
       }
-      return { ok: true, entries, firstBad: null, reason: null }
     },
     /** @param {{ limit?: number }} [options] */
     exportJson(options = {}) {
@@ -461,11 +563,16 @@ export function createAuditLog(config, logger) {
       }
       return rows.join('\n')
     },
+    /** Verify only the HMAC anchor (cheap; used by vigil_doctor). */
+    anchorState() {
+      return verifyAnchor()
+    },
     /** Human readable state line. */
     describe() {
       if (!enabled) return '审计日志：已禁用'
       const stats = this.stats()
-      return `审计日志：${stats.total} 条，${stats.files.length} 个文件，${formatBytes(stats.sizeBytes)}，目录 ${dir}`
+      const anchor = anchorEnabled ? '；已锚定' : ''
+      return `审计日志：${stats.total} 条，${stats.files.length} 个文件，${formatBytes(stats.sizeBytes)}，目录 ${dir}${anchor}`
     },
   }
 }

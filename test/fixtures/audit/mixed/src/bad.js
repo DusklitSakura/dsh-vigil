@@ -1,5 +1,5 @@
 // mixed fixture source
-export const apiKey = 'AKIAIOSFODNN7EXAMPLE';
+export const apiKey = 'AKIA2E7QK4M9ZP3RTU6W';
 
 export function run(code) {
   return eval(code);

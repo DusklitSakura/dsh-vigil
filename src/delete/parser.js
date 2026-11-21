@@ -1187,7 +1187,15 @@ function resolveTarget(rawTarget, shell, ctx) {
   if (!provider && isAbsoluteRoot(raw, resolvedPath, flavor) && absolute) risks.add('absolute-root');
   if (provider || isProtectedPath(raw, resolvedPath)) risks.add('protected-path');
 
-  const unparsed = Boolean(rawTarget.synthetic) || scope === 'variable';
+  // A relative literal target with no usable working directory stays unresolved:
+  // the caller interprets that as "unknown", never as "safe to delete".
+  const relativeWithoutBase = scope === 'literal'
+    && !provider
+    && resolvedPath === null
+    && !/^[\\/]/.test(raw)
+    && !/^[A-Za-z]:[\\/]?/.test(raw)
+    && !/^~([\\/]|$)/.test(raw);
+  const unparsed = Boolean(rawTarget.synthetic) || scope === 'variable' || relativeWithoutBase;
   const target = {
     raw,
     resolvedPath,
@@ -1427,6 +1435,7 @@ function buildIntent(state, ctx) {
     force,
     wildcard,
     destructive: isDelete && !dryRun,
+    deleteKind: (effective[0] ?? deleteStatements[0])?.deleteKind ?? 'none',
     targets,
     statements,
     reasons,
@@ -1467,7 +1476,7 @@ function classifyChunk(text, ctx) {
   if (!keywordOnly && PWSH_CMDLETS.has(command)) return 'pwsh';
   if (!keywordOnly && PWSH_ONLY_ALIASES.has(command)) return 'pwsh';
   if (/\$env:/i.test(text) || /\$\{env:/i.test(text)) return 'pwsh';
-  if (/::\s*Delete\s*\(/i.test(text)) return 'pwsh';
+  if (/::\s*Delete\s*\(/i.test(text) || /\.\s*Delete\s*\(/i.test(text)) return 'pwsh';
   if (/(?:^|\s)-[A-Za-z]+:(?:\$|\{|['"])/.test(text)) return 'pwsh';
   if (/(?:^|\s)-(?:whatif|literalpath|path|recurse|include|exclude|filter|confirm|erroraction|passthru|force|verbose|debug)\b/i.test(text)) {
     return 'pwsh';
@@ -1483,6 +1492,13 @@ function classifyChunk(text, ctx) {
   }
 
   const hasSlashFlags = /(?:^|\s)\/[A-Za-z]/.test(text);
+  // On Windows the shell tool is PowerShell: `rm -rf D:\x` is the Remove-Item
+  // alias, not POSIX rm. Letting the POSIX parser treat backslashes as escapes
+  // mangles the target (`D:\x` → `D:x`), which can hide a protected root.
+  const windowsPath = /(?:^|[\s'"=])(?:[A-Za-z]:[\\/]|\\\\|\.{1,2}\\)/.test(text);
+  const platform = ctx?.platform ?? process.platform;
+  const nativeCmd = command === 'del' || command === 'erase' || command === 'rd' || command === 'robocopy' || command === 'rmdir' || command === 'for' || command === 'if';
+  if (windowsPath && platform === 'win32' && !nativeCmd) return 'pwsh';
   // cmd control structures that embed a delete command in the same chunk.
   if (command === 'for' || command === 'if') {
     if (/\b(?:del|erase|rd|rmdir|robocopy)\b/i.test(text) && (hasSlashFlags || /%[A-Za-z_][A-Za-z0-9_]*%/.test(text) || text.includes('\\'))) {
@@ -1492,7 +1508,7 @@ function classifyChunk(text, ctx) {
     return 'posix';
   }
   if (command === 'del' || command === 'erase' || command === 'robocopy' || command === 'rd') return 'cmd';
-  if (command === 'rmdir') return hasSlashFlags ? 'cmd' : 'posix';
+  if (command === 'rmdir') return hasSlashFlags ? 'cmd' : windowsPath ? 'pwsh' : 'posix';
   if (CMD_COMMANDS.has(command)) return 'cmd';
   if (POSIX_COMMANDS.has(command)) return 'posix';
   if (CONTROL_KEYWORDS.has(command) || keywordOnly) return 'posix';
@@ -1504,6 +1520,9 @@ function classifyChunk(text, ctx) {
   if (lower.length === 0) return 'unknown';
   return 'unknown';
 }
+
+/** Delete/truncate verbs that make a wrapped child process destructive. */
+const DELETE_PAYLOAD_RE = /(^|[\s;|&{'"`])(?:remove-item|ri|rm|del|erase|rd|rmdir|clear-content|move-item)\b/i;
 
 /**
  * Detect a shell wrapper (`bash -c`, `pwsh -Command`, `cmd /c`, `eval`, ...).
@@ -1577,9 +1596,15 @@ function detectWrapper(text) {
   }
 
   if (first === 'iex' || first === 'invoke-expression') {
-    const rest = text.slice(tokens[0].end).trim();
+    let rest = text.slice(tokens[0].end).trim();
     const restTokens = headTokens(rest, 2);
     if (restTokens.length === 0) return { kind: 'dynamic', shell: 'pwsh', note: 'Invoke-Expression 缺少可解析参数' };
+    // `iex -Command "Remove-Item …"` is the same call as
+    // `iex "Remove-Item …"`; the parameter name must not hide the payload.
+    if (/^-(?:c|co|com|comm|comma|comman|command)$/i.test(restTokens[0].value)) {
+      rest = rest.slice(restTokens[0].end).trim();
+      return { kind: 'inner', innerShell: 'pwsh', innerText: unquoteWord(rest), notes: ['经由 Invoke-Expression -Command 执行'] };
+    }
     const candidateRaw = restTokens[0].raw.trim();
     const literal = /^['"]/.test(candidateRaw);
     const candidate = restTokens[0].value;
@@ -1588,6 +1613,40 @@ function detectWrapper(text) {
     }
     const innerText = unquoteWord(rest);
     return { kind: 'inner', innerShell: 'pwsh', innerText, notes: ['经由 Invoke-Expression 执行'] };
+  }
+
+  // `Start-Process` / `wsl` are process launchers: the deletion happens in the
+  // child process. Extract the payload when it is a literal, otherwise treat the
+  // call as an unparsed destructive command instead of letting it through.
+  if (first === 'start-process' || first === 'saps' || first === 'start') {
+    const quoted = [...text.matchAll(/(['"])([\s\S]*?)\1/g)].map(match => match[2]);
+    const payload = quoted.find(value => DELETE_PAYLOAD_RE.test(value));
+    if (payload) {
+      return { kind: 'inner', innerShell: 'pwsh', innerText: payload, notes: ['经由 Start-Process 间接执行'] };
+    }
+    if (DELETE_PAYLOAD_RE.test(text)) {
+      return { kind: 'dynamic', shell: 'pwsh', note: 'Start-Process 启动的子进程可能执行删除，目标无法静态解析' };
+    }
+    return null;
+  }
+
+  if (first === 'wsl') {
+    // `wsl [-d distro] [-u user] [--cd dir] [--exec] <command …>`
+    let index = 1;
+    while (index < tokens.length) {
+      const value = tokens[index].value;
+      if (!value.startsWith('-')) break;
+      const name = value.replace(/^-+/, '').toLowerCase();
+      if (['d', 'distribution', 'u', 'user', 'cd', 'shell-type', 'set-default-user'].includes(name)) index += 2;
+      else index += 1;
+    }
+    if (index >= tokens.length) return null;
+    return {
+      kind: 'inner',
+      innerShell: 'posix',
+      innerText: text.slice(tokens[index].start),
+      notes: ['经由 wsl 在 Linux 子系统中执行'],
+    };
   }
 
   return null;

@@ -54,7 +54,7 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 | `audit/*` | 安装前静态审计：lexer、规则目录、narrative、扫描器、安装目标解析 | **绝不 import/执行被扫描代码**；报告只含文件/行/证据 |
 | `install-watch.js` | profile 依赖差分：新增＝install，版本/范围变化＝update；手动 `rescan()` | 首次运行只建立基线，不重报已装插件 |
 | `approval.js` | `ask` 决策的等待队列 + `/approval` 路由 | 无人应答/取消/队列满 → deny（fail-closed），并写审计 |
-| `audit-log.js` | 追加写 JSONL + 哈希链 + 轮转 + CSV/JSON 导出；清理 / 归档 / 恢复 / 删除会话 | 进程级**单写者**（`Symbol.for('dsh-vigil.audit-sinks')`）；`SINK_REVISION` 变更时重建 sink；清理与归档后重写存活记录为新链并留 `audit-clear/archive/restore/delete` 事件 |
+| `audit-log.js` | 追加写 JSONL + 哈希链 + 轮转 + CSV/JSON 导出；清理 / 归档 / 恢复 / 删除会话；可选 HMAC 链头锚定 | 进程级**单写者**（`Symbol.for('dsh-vigil.audit-sinks')`）；`SINK_REVISION` 变更时重建 sink；清理与归档后重写存活记录为新链并留 `audit-clear/archive/restore/delete` 事件；锚定密钥只来自环境变量 |
 | `audit-feed.js` | 只读 feed：决策（脱敏摘要）、pending、安装审计、隔离区快照 | 不返回原始工具参数；只注册在 `connection.fetch`（已认证） |
 | `audit-clear-route.js` | 已认证清理端点：`{action:'all'}` / `{action:'session', sessionId}` | 破坏性操作，只能挂在已认证 Fetch 通道 |
 | `sage-action-route.js` | 已认证 Sage 维护端点：`{action:'uninstall'}` | 删除自动下载的引擎树；页面先关 Sage/自动下载再调用 |
@@ -62,7 +62,9 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 | `install-scan-route.js` | 手动重扫端点 | 不依赖会话；扫描只读 |
 | `integrity.js` | 基线（`src/**`、`package.json`、`cordis.patch.yml`、`client.js`）、金丝雀、心跳、可选签名 | 版本或根目录变化时重建基线；漂移只告警不阻断 |
 | `sage-provision.js` | 定位/下载/升级 Sage 引擎与规则 | 精确版本、`ignore-scripts`、可选原生依赖关闭；升级失败回滚 |
-| `tools.js` | `vigil_scan/status/quarantine/audit/integrity/sage` | 只读为主；写操作需要显式参数（restore/purge/install） |
+| `tools.js` | `vigil_scan/status/quarantine/audit/integrity/sage/doctor` | 只读为主；写操作需要显式参数（restore/purge/install） |
+| `rules/yaml.js` | 规则包用的最小 YAML 子集解析器 | 只接受映射/缩进列表/标量；不支持 flow 集合与锚点 |
+| `rules/pack.js` | 规则数据包：随包 `rules/*.yaml` + 外部目录覆盖 | 失败保留上一份可用规则；只含数据，不含逻辑 |
 
 ## 3. 决策流水线（`tools/pre-execute`）
 
@@ -155,6 +157,22 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 7. 所有设置字段必须是 volatile 叶子；保存后热重建运行时，不得重载 bundle。
 8. `client.js` 保持单文件零构建；不新增构建步骤（DSH 只加载该文件 + `locale/*.json` + `icon`）。
 9. 新增路由只能挂在 `connection.fetch`（已认证通道），不得注册到裸 `webServer`。
+10. 保护根判定必须走 `canonicalizePath()`（`~`/`%VAR%`/`$env:`/8.3/`\\?\`/junction 归一），不要退回纯字符串比较；测试覆盖系统目录**子路径**。
+11. `mode: monitor` 下 `ctx.tools.guard()` 必须放行（只记录 `wouldBe`），guard 里不得只依据 `selfProtection`。
+12. 规则数据只写在 `rules/*.yaml`（凭证路径、密钥形态、提权关键词、外发 API），匹配逻辑留在代码；新增模式不要再写回 JS 常量。
+13. 相对删除目标的工作目录只能是会话工作区：`deleteGuard.projectRoot` 或宿主 cwd，且宿主 cwd 在 Harness 主目录内时视为未知（按 `unknownTarget` 处理）。
+14. `write`/`edit` 的正文内容永远不算“路径修改”：`VG-RT-07`/`VG-RT-11` 只看解析出的目标路径与写/删动作，否则写一份提到配置路径的文档就会被拦。
+15. 对话内审计的 feed 保留最近 300 条决策再按 `session` 投影；不要把窗口缩回 40（会饥饿掉本会话的拦截记录）。
+16. 隔离区过期在插件激活时与每 6 小时自动执行一次，并写 `expire` 事件；不要依赖用户手动清理。
+17. 大包扫描必须协作：扫描器每 25 个文件 `setImmediate` 让出事件循环，安装前门禁另有 200 文件 / 1.5s 预算（超时按 `VG-AUDIT-02` 询问）。
+18. 审计锚定的密钥只从环境变量读取（`auditLog.anchor.keyEnv`），永远不要写进日志目录或配置文件；锚点缺失/回滚在 `vigil_audit verify` 与 `vigil_doctor` 里是失败项。
+19. 截断类写入（`Clear-Content`/`Set-Content`/`Out-File`）按破坏性处理并走保护根/规模判定，但**不得**进入隔离区：把文件移走不等于截断，恢复后语义会变。
+20. 扫描器跳过 `dist/build/coverage` 等目录时必须记录；入口（`main`/`exports`/`bin`）指向这些目录时报 `VG-SCAN-04`，并让安装门禁按“未覆盖”询问。
+21. 完整性基线除 `src/**/*.js` 与根文件外，必须包含随包 `rules/**/*.yaml`；改规则数据等同于改检测行为，不能视为“文档变更”。
+22. Windows 上出现盘符/反斜杠路径时按 PowerShell 解析（`rm -rf D:\x` 是别名 + 递归），否则 POSIX 转义会改写目标路径。`-rf` 按 `-Recurse -Force` 处理。
+23. `>` / `2>` 重定向按截断处理（`deleteKind: 'truncate'`），`>>` 只追加、`> $null`/`NUL`/`/dev/null` 不算；截断与 `Clear-Content` 一样不进隔离区。
+24. 外部规则包在 `reloadRulePack` 里必须对照 `rules-lock.json`：已 pin 的文件哈希不符或未登记 → 跳过该文件并告警，绝不让被篡改的规则静默生效。
+25. 自扫描降级只认 manifest 里的 `dsh.vigil.selfScan === true`，且只降级 `test/**`；不能按目录名或包名硬编码，否则等于给恶意包开口子。
 
 ## 8. 维护清单
 

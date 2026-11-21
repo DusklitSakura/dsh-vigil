@@ -20,6 +20,7 @@
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
+    "rules",
     "docs",
     "threats",
     "icon.svg",
@@ -35,6 +36,9 @@
     "client": {
       "platform": "web",
       "immediately": true
+    },
+    "vigil": {
+      "selfScan": true
     }
   },
   "scripts": {

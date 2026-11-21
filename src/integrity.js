@@ -37,6 +37,8 @@ const SELF_DIR = dirname(fileURLToPath(import.meta.url))
  * are deliberately excluded so editing them does not raise a tamper alert.
  */
 const BASELINE_EXTENSIONS = new Set(['.js'])
+/** Rule packs are data, but they decide what is detected: hash them too. */
+const BASELINE_RULE_EXTENSIONS = new Set(['.yaml', '.yml'])
 const BASELINE_ROOT_FILES = ['package.json', 'cordis.patch.yml', 'client.js']
 
 /**
@@ -101,7 +103,7 @@ export function createIntegrity(config, options = {}) {
   function hashShippedFiles() {
     /** @type {Record<string, string>} */
     const files = {}
-    const walk = (dir, depth) => {
+    const walk = (dir, depth, extensions) => {
       if (depth > 6) return
       let entries
       try {
@@ -113,11 +115,11 @@ export function createIntegrity(config, options = {}) {
         const full = join(dir, entry.name)
         if (entry.isDirectory()) {
           if (entry.name === 'node_modules' || entry.name === '.git') continue
-          walk(full, depth + 1)
+          walk(full, depth + 1, extensions)
           continue
         }
         if (!entry.isFile()) continue
-        if (!BASELINE_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue
+        if (!extensions.has(extname(entry.name).toLowerCase())) continue
         try {
           if (statSync(full).size > 2 * 1024 * 1024) continue
           files[toPosixRelative(pluginDir, full)] = sha256(readFileSync(full))
@@ -126,7 +128,8 @@ export function createIntegrity(config, options = {}) {
         }
       }
     }
-    walk(join(pluginDir, 'src'), 0)
+    walk(join(pluginDir, 'src'), 0, BASELINE_EXTENSIONS)
+    walk(join(pluginDir, 'rules'), 0, BASELINE_RULE_EXTENSIONS)
     for (const name of BASELINE_ROOT_FILES) {
       const full = join(pluginDir, name)
       try {
@@ -397,7 +400,7 @@ export function createIntegrity(config, options = {}) {
     if (!enabled) return '完整性：已禁用'
     const parts = []
     parts.push(state.baseline.state === 'match'
-      ? `基线一致（v${state.baseline.version ?? '?'})`
+      ? `基线一致（v${state.baseline.version ?? '?'}）`
       : state.baseline.state === 'absent'
         ? '基线未建立'
         : state.baseline.state === 'drift'
