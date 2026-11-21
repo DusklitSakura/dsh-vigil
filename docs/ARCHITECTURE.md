@@ -51,7 +51,7 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 | `sentinel/guard.js` | 自保护：删除/移动插件目录或状态目录、工具卸载/替换自身 | 默认 `deny`（单调 guard）；`selfProtection:'ask'` 时交给决策流水线询问 |
 | `sentinel/sage.js` / `sage-load.js` | Sage 适配器：预热、串行化、超时、失败降级；安装后加载校验 | 只评估执行/网络面（Bash/WebFetch/Read/Delete）；可选引擎失败降级内置规则 |
 | `delete/*` | 删除意图解析（POSIX/PowerShell）、保护根分级、规模估算、隔离区存储 | 隔离区只接收 `deny` + 低/中风险的字面目标；通配/不可解析目标不移动 |
-| `audit/*` | 安装前静态审计：lexer、规则目录、narrative、扫描器、安装目标解析 | **绝不 import/执行被扫描代码**；报告只含文件/行/证据 |
+| `audit/*` | 安装前静态审计：lexer、规则目录、narrative、扫描器、安装目标解析、AST 别名分析 | **绝不 import/执行被扫描代码**；报告只含文件/行/证据；`audit/ast.js` 的 acorn 解析失败或缺失时回退纯正则 |
 | `install-watch.js` | profile 依赖差分：新增＝install，版本/范围变化＝update；手动 `rescan()` | 首次运行只建立基线，不重报已装插件 |
 | `approval.js` | `ask` 决策的等待队列 + `/approval` 路由 | 无人应答/取消/队列满 → deny（fail-closed），并写审计 |
 | `audit-log.js` | 追加写 JSONL + 哈希链 + 轮转 + CSV/JSON 导出；清理 / 归档 / 恢复 / 删除会话；可选 HMAC 链头锚定 | 进程级**单写者**（`Symbol.for('dsh-vigil.audit-sinks')`）；`SINK_REVISION` 变更时重建 sink；清理与归档后重写存活记录为新链并留 `audit-clear/archive/restore/delete` 事件；锚定密钥只来自环境变量 |
@@ -173,6 +173,7 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 23. `>` / `2>` 重定向按截断处理（`deleteKind: 'truncate'`），`>>` 只追加、`> $null`/`NUL`/`/dev/null` 不算；截断与 `Clear-Content` 一样不进隔离区。
 24. 外部规则包在 `reloadRulePack` 里必须对照 `rules-lock.json`：已 pin 的文件哈希不符或未登记 → 跳过该文件并告警，绝不让被篡改的规则静默生效。
 25. 自扫描降级只认 manifest 里的 `dsh.vigil.selfScan === true`，且只降级 `test/**`；不能按目录名或包名硬编码，否则等于给恶意包开口子。
+26. AST 别名分析是可选增强：acorn 只用于建本地别名表与调用点，解析失败/依赖缺失必须回退正则；不得让 acorn 的异常影响扫描主流程。
 
 ## 8. 维护清单
 

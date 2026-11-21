@@ -38,6 +38,7 @@ import {
   truncateEvidence,
 } from './narrative.js';
 import { getRulePack } from '../rules/pack.js';
+import { analyzeAliases } from './ast.js';
 
 /** @typedef {'credential'|'network'|'dynamic-code'|'config-tamper'|'supply-chain'|'dsh-attack'|'unknown'} RuleCategory */
 
@@ -963,6 +964,24 @@ export function scanCodeFile(context) {
       finding.extraMeans = [finding.extraMeans, '该关键词只出现在字符串/文案里，未在可执行代码中声明权限，因此按“可疑”处理。']
         .filter(Boolean)
         .join(' ');
+    }
+  }
+
+  // ---- AST pass: aliased capability calls (best effort) -------------------
+  // Line-based rules miss `const cp = require(...); const run = cp.exec; run(x)`.
+  // This pass parses the file once; any parse failure simply skips it.
+  if (/\.(?:[cm]?js)$/i.test(String(file ?? ''))) {
+    const ast = analyzeAliases(text);
+    if (ast.ok) {
+      for (const call of ast.calls) {
+        if (!Number.isInteger(call.line) || call.line < 1) continue;
+        const evidence = lineTextAt(text, call.line);
+        if (call.kind === 'child_process') {
+          add('VG-DYN-02', call.line, { vars: { api: call.name }, confidence: 'ast', evidence });
+        } else if (call.kind === 'eval') {
+          add('VG-DYN-01', call.line, { confidence: 'ast', evidence });
+        }
+      }
     }
   }
 

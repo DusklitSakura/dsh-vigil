@@ -27,7 +27,8 @@
     "README.md"
   ],
   "dependencies": {
-    "@deepseek-ai/schemastery": "~3.19.0"
+    "@deepseek-ai/schemastery": "~3.19.0",
+    "acorn": "^8.19.0"
   },
   "dsh": {
     "bundle": {

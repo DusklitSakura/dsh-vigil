@@ -34,7 +34,7 @@
 
 本包是标准 dsh bundle：`package.json` 声明 `dsh.bundle.patch` 与 `dsh.client`，`exports` 暴露 `./cordis.patch.yml` 与 `./client`。
 
-先装一次唯一的运行时依赖（`schemastery`，DSH 官方配置 schema 包）：本地目录安装是 `link:` 方式，pnpm 不会代为安装被链接包的依赖。
+先装一次运行时依赖（`schemastery`，DSH 官方配置 schema 包；`acorn`，静态审计的 AST 别名分析）：本地目录安装是 `link:` 方式，pnpm 不会代为安装被链接包的依赖。
 
 ```powershell
 cd <本目录>
@@ -47,7 +47,7 @@ npm install --omit=dev
 2. **通过工具**（如果会话里有 `plugin_manager`）：`install_bundle`，`target` 为本目录绝对路径。
 3. 安装后新开一个会话生效（或由 Harness 的 HMR 直接激活）；设置页在 **Settings（设置）→ 守夜人**。
 
-没有构建步骤、没有安装脚本；`src/`、`client.js` 就是实际加载的文件。缺少 `schemastery` 时插件仍会挂载可用（拦截链正常），只是不出现设置页并在 `vigil_status` 中提示。
+没有构建步骤、没有安装脚本；`src/`、`client.js` 就是实际加载的文件。缺少 `schemastery` 时插件仍会挂载可用（拦截链正常），只是不出现设置页并在 `vigil_status` 中提示；缺少 `acorn` 时审计退化为纯正则，AST 别名分析自动跳过。
 
 ### 从 GitHub 安装与更新（可经 DSH 更新）
 
@@ -304,6 +304,7 @@ secretTokens:
 - **强制移动先询问**（`VG-RT-13`）：`Move-Item -Force`（及 `mv -f`）会静默覆盖目标原有内容，按询问处理。
 - **截断类写入按破坏性处理**：`Clear-Content`、`Set-Content`、`Out-File` 会清空/覆盖文件，走保护根与规模判定；这类操作**不会**被移入隔离区（移动文件并不等于截断，恢复后语义会变）。`>`（含 `2>`）重定向同样按截断处理，`>>` 只追加、`> $null` / `> NUL` 不算。
 - **编码载荷解码**：`Buffer.from('<base64>','base64')`、`atob(...)`、`FromBase64String(...)` 与十六进制转义会先解码，再用外发/执行规则检查；变量之间传递的编码载荷无法静态还原（见已知限制 2）。
+- **AST 别名分析**：对 `.js/.mjs/.cjs` 用 acorn 解析一次，跟踪 `const cp = require('child_process')`、`const { spawn: launch } = ...`、`const run = cp.exec` 等本地别名，把真正调用点报成 `VG-DYN-02`/`VG-DYN-01`；解析失败（TS/JSX/语法错误）自动回退到正则，acorn 不可用时同样回退。
 - **非文本不再静默**：图片/二进制等按 `nonTextFiles` 计数并显示在扫描限制里；目录名恰好是 `*.js` 时会正常递归，不会被当成文件跳过。
 - **路径判定先规范化**：`~`、`$env:`、`%VAR%`、8.3 短名、junctions、`\\?\` 先归一再比保护根；`write/edit` 的正文内容不算“路径修改”。
 - **PowerShell 优先**：在 Windows 上，命令里出现盘符或反斜杠路径时按 PowerShell 语义解析（`rm -rf D:\x` 是 `Remove-Item` 别名，不会把 `\` 当转义吃掉）；`-rf`/`-fr` 视为 `-Recurse -Force`（PowerShell 本身不接受组合短选项）。
@@ -369,7 +370,7 @@ secretTokens:
 13. **测试夹具含恶意样式文本。** `test/fixtures/audit/**` 为了验证检测规则，包含 `curl … | sh`、硬编码密钥样例、外发 URL 等**惰性文本**，不会被导入或执行；杀毒软件可能误报或隔离这些文件（本机 Kaspersky 曾拦截过一次）。恢复方法见 `test/fixtures/README.md`。
 14. **审计日志是尽力而为。** 日志写入失败时决策仍继续（记录一次警告）；停机开关期间只记录 `pre-execute-bypass`，不记录每条被跳过的判定细节。
 15. **设置页只暴露常用字段。** 保护根列表、白名单主机、Sage 签名/信任域名、kill switch 路径等高级字段仍写在 YAML `config` 里；设置页保存只合并自己管理的字段。
-16. **设置页依赖一个 npm 包。** `@deepseek-ai/schemastery`（DSH 官方的配置 schema 包，MIT）是唯一随包依赖，安装前需在包目录执行 `npm install --omit=dev`（本地 `link:` 安装不会代为安装依赖）。缺失时插件仍可用，只是没有设置页。
+16. **运行时依赖两个 npm 包。** `@deepseek-ai/schemastery`（DSH 官方的配置 schema 包，MIT）用于设置页 schema；`acorn`（MIT）用于静态审计的 AST 别名分析。安装前需在包目录执行 `npm install --omit=dev`（本地 `link:` 安装不会代为安装依赖）。缺少 schemastery 时没有设置页；缺少 acorn 时审计退化为纯正则，插件本身仍可用。
 17. **对话内审计抽屉需要页面的认证 Fetch 通道。** 它通过 `GET /api/dsh-vigil/audit` 读取脱敏摘要；在没有该通道的宿主形态里，抽屉只显示“暂时无法读取审计记录”，不影响拦截本身。
 18. **对话内提示不是审批记录。** 提示由客户端轮询产生，可能在页面关闭/休眠时错过；权威记录始终是哈希链审计日志（`vigil_audit`）。
 19. **对话内审批要求页面在线。** 没有人点按钮时请求会按超时（默认 120s）拒绝；要完全交给宿主审批，请在设置页关闭「在对话内直接审批」。
@@ -443,7 +444,7 @@ client.js                   浏览器半边（单文件、零构建；按分区�
 └── 全局浮层                 安装审计自动弹窗（shell.overlay）
 ```
 
-- 纯 ESM、无构建步骤；唯一运行时依赖 `@deepseek-ai/schemastery`（推荐先 `npm install --omit=dev`，仅在缺依赖时测试会跳过 schema 用例）。Node ≥ 20（Harness 宿主）。
+- 纯 ESM、无构建步骤；运行时依赖 `@deepseek-ai/schemastery` 与 `acorn`（推荐先 `npm install --omit=dev`）
 - 测试：`node --test test/`；语法检查：`node --check client.js`。
 - 状态目录：`<DSH_HOME>/vigil/`（隔离区、审计日志、完整性状态都在这里；可用 `vigil_status` 查看）。
 

