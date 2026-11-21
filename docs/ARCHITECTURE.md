@@ -174,6 +174,7 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 24. 外部规则包在 `reloadRulePack` 里必须对照 `rules-lock.json`：已 pin 的文件哈希不符或未登记 → 跳过该文件并告警，绝不让被篡改的规则静默生效。
 25. 自扫描降级只认 manifest 里的 `dsh.vigil.selfScan === true`，且只降级 `test/**`；不能按目录名或包名硬编码，否则等于给恶意包开口子。
 26. AST 别名分析是可选增强：acorn 只用于建本地别名表与调用点，解析失败/依赖缺失必须回退正则；不得让 acorn 的异常影响扫描主流程。命中等级由 `scan.ast.level` 映射为 notice/review/blocker（只升不降）。
+27. 自保护必须按**解析后的目标**判定，不能因为命令文本里出现受保护目录就拒绝：cd <pluginDir>; Remove-Item %TEMP%\\x 不是自修改；cd 操作数不是删除目标，相对目标要按 chdir 后的 cwd 解析。运行时计算的目标（(Join-Path …)）标记为 unresolved 并回退文本检查。
 
 ## 8. 维护清单
 

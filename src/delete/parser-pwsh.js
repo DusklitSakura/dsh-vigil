@@ -190,12 +190,16 @@ function psGlobFromText(text) {
  */
 function psTarget(token, literal, extra) {
   const glob = literal ? { hasGlob: false, globKind: 'none' } : { hasGlob: Boolean(token.hasGlob), globKind: token.globKind || 'none' };
+  // `(Join-Path $x y)` / `$(...)` is computed at runtime: resolving the literal
+  // text as a path would invent a target and hide the real one.
+  const synthetic = /^\s*\$?\(/.test(String(token.value ?? ''));
   return Object.assign(
     {
       raw: unmask(token.value),
       text: token.value,
       hasGlob: glob.hasGlob,
       globKind: glob.globKind,
+      ...(synthetic ? { synthetic: true } : {}),
     },
     extra || {},
   );
@@ -209,7 +213,14 @@ function psTarget(token, literal, extra) {
  */
 function psTargetInline(value, literal) {
   const glob = literal ? { hasGlob: false, globKind: 'none' } : psGlobFromText(value);
-  return { raw: unmask(value), text: value, hasGlob: glob.hasGlob, globKind: glob.globKind };
+  const synthetic = /^\s*\$?\(/.test(String(value ?? ''));
+  return {
+    raw: unmask(value),
+    text: value,
+    hasGlob: glob.hasGlob,
+    globKind: glob.globKind,
+    ...(synthetic ? { synthetic: true } : {}),
+  };
 }
 
 /** A synthetic `.` root token / target. */
@@ -882,6 +893,27 @@ function parseTruncate(command, args, text) {
 }
 
 /**
+ * Parse a move/rename source target (`Move-Item`, `Rename-Item`).
+ *
+ * The statement is deliberately `isDelete: false` (the delete policy does not
+ * gate moves), but the resolved source target is kept so self-protection can
+ * refuse moving the plugin/state directory away.
+ *
+ * @param {string} command normalized command name
+ * @param {Array<object>} args tokens after the command word
+ * @param {string} text stage text
+ * @returns {object} partial statement
+ */
+function parseMove(command, args, text) {
+  const partial = parseRemoveItem(args, text);
+  partial.command = command;
+  partial.isDelete = false;
+  partial.deleteKind = 'move';
+  partial.notes = [...(partial.notes ?? []), '移动/重命名会改变文件位置（不在删除策略内）'];
+  return partial;
+}
+
+/**
  * Parse `Remove-Item` parameters / positional targets.
  * @param {Array<object>} args tokens after the command word
  * @param {string} text stage text
@@ -1150,6 +1182,11 @@ function parsePwshStage(stageText, depth) {
   // not `Remove-Item`; without this they were silently allowed on any file.
   if (command === 'clear-content' || command === 'set-content' || command === 'out-file') {
     return { partial: parseTruncate(command, args, stage), producer: null };
+  }
+  // Moves are not deletions for the delete policy, but they are destructive for
+  // the source location; self-protection needs their targets.
+  if (command === 'move-item' || command === 'rename-item') {
+    return { partial: parseMove(command, args, stage), producer: null };
   }
   if (command === 'invoke-expression') {
     return {

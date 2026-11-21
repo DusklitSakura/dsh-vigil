@@ -23,9 +23,12 @@
  * explicit opt-out for plugin-manager removal stays `allowSelfUninstall: true`.
  *
  * Known limits, kept honest in the README:
- *   - the checks look at the command/path arguments; a shell command that
- *     writes a relative path while its working directory is the plugin dir can
- *     still slip through (write/edit tools carry absolute paths and are caught);
+ *   - delete/move targets are judged by the parsed intent (with `cd` operands
+ *     ignored); write/edit checks still compare path tokens, so a shell command
+ *     that writes a relative path after `cd` into the plugin dir is judged by
+ *     the text mention (and is therefore refused, not missed);
+ *   - runtime-computed targets such as `(Join-Path ...)` cannot be resolved, so
+ *     they fall back to the conservative text check;
  *   - the checks only see model tool calls, not UI actions that call the plugin
  *     manager Remote service directly;
  *   - the emergency kill switch (`DSH_VIGIL_DISABLED` / `DISABLED` file) bypasses
@@ -36,6 +39,7 @@
 
 import { basename, relative, resolve } from 'node:path'
 import { canonicalizePath, getHomeDir, isWithin, pathKey } from '../util.js'
+import { parseDeleteIntent } from '../delete/parser.js'
 
 const DESTRUCTIVE_VERB = /\b(?:rm|rmdir|del|erase|rd|remove-item|remove|unlink|mv|move|move-item|ren|rename|rename-item|trash|shred|delete|robocopy(?:\s+\S+){2}\s+\/mir|\/mir)\b/i
 const WRITE_VERB = /\b(?:set-content|add-content|out-file|tee-object|tee|new-item|touch|copy-item|move-item|rename-item|mkdir|robocopy|xcopy|clear-content|sed\s+-i|perl\s+-pi|apply_patch|git\s+(?:apply|checkout|reset|clean)|npm\s+(?:install|ci|uninstall|update)|pnpm\s+(?:add|install|remove|update)|yarn\s+(?:add|install|remove))\b|[^>|]\d?>{1,2}\s*[^&|\s]/i
@@ -181,6 +185,48 @@ export function inspectSelfProtection(execution, options) {
       return commandMentionsProtected(text)
     }
 
+    /**
+     * Effective working directory after leading `cd` / `Set-Location` calls.
+     * A relative target after `cd <pluginDir>` must be resolved against it,
+     * otherwise self-protection would judge the wrong file.
+     * @param {string} text
+     * @param {string} baseCwd
+     * @returns {string}
+     */
+    function effectiveShellCwd(text, baseCwd) {
+      let cwd = baseCwd
+      for (const rawSegment of String(text ?? '').split(/[;&|\n]+/)) {
+        const segment = rawSegment.trim()
+        const match = /^(?:cd|chdir|pushd|set-location|sl)\b\s+(?:'([^']*)'|"([^"]*)"|([^\s]+))/i.exec(segment)
+        if (!match) continue
+        const value = match[1] ?? match[2] ?? match[3] ?? ''
+        // Variables/percent-expansions are not resolved here; keep the base.
+        if (value === '' || /^\$/.test(value) || /%[A-Za-z_][A-Za-z0-9_]*%/.test(value)) continue
+        try {
+          cwd = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/') || value.startsWith('\\\\')
+            ? resolve(value)
+            : resolve(cwd, value)
+        } catch {
+          // keep the previous cwd
+        }
+      }
+      return cwd
+    }
+
+    /**
+     * Drop `cd <dir>` operands: a chdir argument is not a delete target, and
+     * treating it as one is what made `cd <pluginDir>; Remove-Item %TEMP%\x`
+     * look like self-modification.
+     * @param {string} text
+     * @returns {string}
+     */
+    function withoutCwdOperands(text) {
+      return String(text ?? '').replace(
+        /(^|[;&|]\s*|then\s+)(?:cd|chdir|pushd|set-location|sl)\b\s+(?:'[^']*'|"[^"]*"|[^\s;|&]+)/gi,
+        '$1',
+      )
+    }
+
     const toolName = typeof execution?.name === 'string' ? execution.name : ''
     if (toolName === '' || toolName.startsWith('vigil_')) return null
     const args = execution?.arguments && typeof execution.arguments === 'object'
@@ -230,11 +276,70 @@ export function inspectSelfProtection(execution, options) {
       }
     }
 
-    // Shell command that removes or moves the protected paths.
-    if (typeof args.command === 'string' || typeof args.cmd === 'string' || typeof args.script === 'string') {
+    // Shell command that removes or moves the protected paths. Judge the parsed
+    // targets first: a `cd <pluginDir>` operand is not a delete target, so it
+    // must not turn an unrelated cleanup into a self-protection hit.
+    if (typeof args.command === 'string' || args.cmd === 'string' || typeof args.script === 'string') {
       const command = args.command ?? args.cmd ?? args.script
-      const commandHit = protectedCommandHit(command)
-      if (commandHit) return hit(basename(commandHit), '该命令会删除或移动 dsh-vigil 自身目录/状态目录')
+      const baseCwd = typeof args.workdir === 'string' && args.workdir !== ''
+        ? args.workdir
+        : typeof args.cwd === 'string' && args.cwd !== ''
+          ? args.cwd
+          : typeof args.workingDirectory === 'string' && args.workingDirectory !== ''
+            ? args.workingDirectory
+            : process.cwd()
+      const commandCwd = effectiveShellCwd(command, baseCwd)
+      /** @type {any} */
+      let intent = null
+      try {
+        intent = parseDeleteIntent(command, {
+          cwd: commandCwd,
+          homeDir: getHomeDir(),
+          env: process.env,
+          platform: process.platform,
+        })
+      } catch {
+        intent = null
+      }
+      const mention = text => {
+        const hitPath = protectedCommandHit(withoutCwdOperands(text))
+        if (hitPath) return hitPath
+        // Unresolved targets after `cd <protectedDir>` are still relative to it.
+        return protectedHit(commandCwd)
+      }
+      const moveDelete = (intent?.statements ?? []).filter(statement =>
+        statement.isDelete === true || /^(?:move|rename)/i.test(String(statement.command ?? '')))
+      if (moveDelete.length > 0) {
+        let where = null
+        for (const statement of moveDelete) {
+          for (const target of statement.targets ?? []) {
+            if (typeof target?.resolvedPath !== 'string') continue
+            where = protectedHit(target.resolvedPath)
+            if (where) break
+          }
+          if (where) break
+        }
+        if (where) return hit(basename(where), '该命令会删除或移动 dsh-vigil 自身目录/状态目录')
+        const unresolved = moveDelete.some(statement => statement.unparsed === true)
+        const anyResolved = moveDelete.some(statement => (statement.targets ?? []).some(target => typeof target?.resolvedPath === 'string'))
+        if (unresolved || !anyResolved) {
+          const whereFallback = mention(command)
+          if (whereFallback) return hit(basename(whereFallback), '该命令会删除或移动 dsh-vigil 自身目录/状态目录')
+        }
+      } else if (intent !== null) {
+        // No parsed destructive statement. Only a command that actually carries
+        // a destructive verb may fall back to the text check; otherwise a plain
+        // command running with the plugin dir as cwd would be refused.
+        if (DESTRUCTIVE_VERB.test(command)) {
+          const whereFallback = mention(command)
+          if (whereFallback) return hit(basename(whereFallback), '该命令会删除或移动 dsh-vigil 自身目录/状态目录')
+        }
+      } else {
+        if (DESTRUCTIVE_VERB.test(command)) {
+          const whereFallback = mention(command)
+          if (whereFallback) return hit(basename(whereFallback), '该命令会删除或移动 dsh-vigil 自身目录/状态目录')
+        }
+      }
       const writeCommandHit = protectedCommandWriteHit(command)
       if (writeCommandHit) return hit(basename(writeCommandHit), '该命令会写入/修改 dsh-vigil 自身目录或状态目录')
     }

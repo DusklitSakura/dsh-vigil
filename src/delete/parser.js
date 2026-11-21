@@ -1205,6 +1205,7 @@ function resolveTarget(rawTarget, shell, ctx) {
     absolute,
     rootLike,
     viaPipeline: Boolean(rawTarget.viaPipeline),
+    ...(rawTarget.synthetic ? { synthetic: true } : {}),
   };
   return { target, risks: Array.from(risks), unparsed, note };
 }

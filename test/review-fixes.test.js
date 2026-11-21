@@ -974,6 +974,38 @@ test('config: an invalid scan.ast.level falls back to medium with a warning', ()
   assert.equal(resolveConfig({ scan: { ast: { level: 'high' } } }).config.scan.ast.level, 'high')
 })
 
+test('self-protection: parsed targets decide, not a chdir operand in the text', () => {
+  const pluginDir = join(tempDir(), 'plugin')
+  const stateDir = join(pluginDir, '..', 'state')
+  mkdirSync(join(pluginDir, 'src'), { recursive: true })
+  mkdirSync(stateDir, { recursive: true })
+  const config = { selfProtection: 'deny', allowSelfUninstall: false, paths: { stateDir } }
+  const inspect = command => inspectSelfProtection({ name: 'pwsh', arguments: { command } }, { config, pluginDir })
+
+  // The reported false positive: chdir into the plugin dir, then clean a temp file.
+  assert.equal(inspect(`cd ${pluginDir}; Remove-Item $env:TEMP\\vigil-tmp-file.txt`), null)
+  // Real deletions/moves of the protected directories still deny.
+  assert.equal(inspect(`Remove-Item -Recurse -Force ${pluginDir}\\src`)?.kind, 'deny')
+  assert.equal(inspect(`cd ${pluginDir}; Remove-Item src\\a.js`)?.kind, 'deny')
+  assert.equal(inspect(`Move-Item ${pluginDir} C:\\temp\\backup`)?.kind, 'deny')
+  assert.equal(inspect(`Remove-Item -Recurse -Force ${stateDir}\\audit-000001.jsonl`)?.kind, 'deny')
+  // A runtime-computed target is unresolved, so the conservative text check runs.
+  assert.equal(inspect(`Remove-Item -Recurse -Force (Join-Path '${pluginDir}' 'src')`)?.kind, 'deny')
+  rmSync(pluginDir, { recursive: true, force: true })
+  rmSync(stateDir, { recursive: true, force: true })
+})
+
+test('delete parser: a parenthesized target is unresolved, never a literal path', () => {
+  const intent = parseDeleteIntent("Remove-Item -Recurse -Force (Join-Path 'C:\\x' 'y')", {
+    cwd: 'C:\\work',
+    homeDir: 'C:/Users/x',
+    platform: 'win32',
+  })
+  assert.equal(intent.isDelete, true)
+  assert.equal(intent.unparsed, true)
+  assert.equal(intent.targets[0].synthetic, true)
+})
+
 test('yaml subset parser: mappings, sequences and scalars', () => {
   const value = parseYaml([
     'schema: 1',

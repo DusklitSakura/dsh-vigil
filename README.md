@@ -304,6 +304,7 @@ secretTokens:
 - 本插件自身的异常会被捕获：评估路径内异常 → `deny` 并说明原因；评估路径外的记账失败只记录、不影响无关调用。
 - **设备路径一律拒绝**（`VG-RT-12`）：`\\.\NUL`、`CON`、`COM1` 等目标写入即等于销毁数据，不按普通删除处理。
 - **强制移动先询问**（`VG-RT-13`）：`Move-Item -Force`（及 `mv -f`）会静默覆盖目标原有内容，按询问处理。
+- **自保护按解析目标判定**：`cd <插件目录>; Remove-Item %TEMP%\x` 不会再被误判为自修改——`cd` 操作数不是删除目标，相对目标按 chdir 后的 cwd 解析；真正删除/移动插件目录或状态目录仍会拦截，运行时计算的目标（`(Join-Path …)`）走保守文本检查。
 - **截断类写入按破坏性处理**：`Clear-Content`、`Set-Content`、`Out-File` 会清空/覆盖文件，走保护根与规模判定；这类操作**不会**被移入隔离区（移动文件并不等于截断，恢复后语义会变）。`>`（含 `2>`）重定向同样按截断处理，`>>` 只追加、`> $null` / `> NUL` 不算。
 - **编码载荷解码**：`Buffer.from('<base64>','base64')`、`atob(...)`、`FromBase64String(...)` 与十六进制转义会先解码，再用外发/执行规则检查；变量之间传递的编码载荷无法静态还原（见已知限制 2）。
 - **AST 别名分析**：对 `.js/.mjs/.cjs` 用 acorn 解析一次，跟踪 `const cp = require('child_process')`、`const { spawn: launch } = ...`、`const run = cp.exec` 等本地别名，把真正调用点报成 `VG-DYN-02`/`VG-DYN-01`；解析失败（TS/JSX/语法错误）自动回退到正则，acorn 不可用时同样回退。命中等级由 `scan.ast.level` 控制（low=提示 / medium=可疑 / high=高危）。
@@ -391,7 +392,7 @@ secretTokens:
 
 本仓库的测试与一次真实安装验证（2026-11-19/20，Windows 11 / DSH Desktop `0.2.2-rc.5`）：
 
-- **测试**：`node --test test/` → **194 个测试全部通过**（静态审计、删除解析、核心/集成/schema、规则包与 YAML 解析、自动下载与升级、审计单写者、审计馈送、对话内审批、自保护询问、安装监听与更新差分、安装前扫描、手动重扫路由、隔离区路由、Sage 评估范围）。静态审计零执行（测试断言只读扫描）；删除解析对 2000+ 随机输入不抛异常；集成测试覆盖 volatile 配置热重建、Sage 安装/升级（版本解析、失败回退、验证失败回滚、并发单飞）、审计链连续性、四条认证路由，以及 Sage 可选引擎失败时的降级路径。
+- **测试**：`node --test test/` → **200 个测试全部通过**（静态审计、删除解析、核心/集成/schema、规则包与 YAML 解析、自动下载与升级、审计单写者、审计馈送、对话内审批、自保护询问、安装监听与更新差分、安装前扫描、手动重扫路由、隔离区路由、Sage 评估范围）。静态审计零执行（测试断言只读扫描）；删除解析对 2000+ 随机输入不抛异常；集成测试覆盖 volatile 配置热重建、Sage 安装/升级（版本解析、失败回退、验证失败回滚、并发单飞）、审计链连续性、四条认证路由，以及 Sage 可选引擎失败时的降级路径。
 - **真实安装**：`plugin_manager install_bundle` 返回 `application: applied`，`include:dsh-vigil` 行为 `active`；6 个 `vigil_*` 工具出现在宿主工具列表（`Tool.listTools`，含 `vigil_sage`）。
 - **设置页**：宿主 `Config` 投影状态为 `schema`；浏览器实时 Slot 树中 `settings.section` 的 occupants 出现 `{ id: "dsh-vigil", order: 55, active: true }`。
 - **对话内审计**：实时 Slot 树中 `conversation.input.dock` 出现 `dsh-vigil-audit`；root 级 `shell.overlay` 出现 `dsh-vigil-install-audit` 与 `dsh-vigil-approval`；独立插件页面 `plugins.tab` 出现 `dsh-vigil-audits`（「插件审计」页签）。
