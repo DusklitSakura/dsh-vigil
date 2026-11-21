@@ -582,8 +582,9 @@ function collectTruncateRedirects(tokens) {
     if (!token.op || !/^[0-9]?>$/.test(token.value)) continue;
     const next = tokens[i + 1];
     if (!next || next.op) continue;
-    const value = unmask(next.value ?? '').trim();
-    if (value === '' || /^\$null$/i.test(value) || /^nul$/i.test(value)) continue;
+    const value = unmask(next.value ?? '').trim().replace(/^['"]|['"]$/g, '');
+    // `$null` / `NUL` / `/dev/null` discard output; they are not files.
+    if (value === '' || /^\$?(?:null|nul)$/i.test(value) || /^\/dev\/(?:null|stdout|stderr)$/.test(value)) continue;
     targets.push(next);
   }
   return targets;

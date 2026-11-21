@@ -1236,7 +1236,8 @@ function collectTruncateRedirects(tokens) {
     const next = tokens[i + 1];
     if (!next || next.op) continue;
     const value = String(next.value ?? '').trim();
-    if (value === '' || /^\/dev\/(?:null|stdout|stderr)$/.test(value)) continue;
+    // `$null` / `NUL` are void sinks, same as `/dev/null`; never treat them as files.
+    if (value === '' || /^\$?(?:null|nul)$/i.test(value) || /^\/dev\/(?:null|stdout|stderr)$/.test(value)) continue;
     targets.push(next);
   }
   return targets;

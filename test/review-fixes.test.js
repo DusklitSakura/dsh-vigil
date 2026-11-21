@@ -1006,6 +1006,34 @@ test('delete parser: a parenthesized target is unresolved, never a literal path'
   assert.equal(intent.targets[0].synthetic, true)
 })
 
+test('redirect to a void sink is not a truncation', () => {
+  const options = { cwd: 'C:/work', homeDir: 'C:/Users/x', platform: 'win32' }
+  for (const command of [
+    'npm config get proxy 2>$null',
+    'git status 2>$null',
+    'Get-Content a.txt > $null',
+    'Write-Output x > NUL',
+    'npm ci 2>&1',
+  ]) {
+    assert.equal(parseDeleteIntent(command, options).isDelete, false, command)
+  }
+  assert.equal(parseDeleteIntent('Get-Content a.txt > b.txt', options).isDelete, true)
+  assert.equal(parseDeleteIntent('echo x > /dev/null', { ...options, platform: 'linux' }).isDelete, false)
+})
+
+test('self-protection: a chdir into the plugin dir plus a void redirect stays allowed', () => {
+  const root = tempDir()
+  const pluginDir = join(root, 'plugin')
+  mkdirSync(join(pluginDir, 'src'), { recursive: true })
+  const config = { selfProtection: 'deny', allowSelfUninstall: false, paths: { stateDir: join(root, 'state') } }
+  const result = inspectSelfProtection(
+    { name: 'pwsh', arguments: { command: `cd ${pluginDir}; npm config get proxy 2>$null` } },
+    { config, pluginDir },
+  )
+  assert.equal(result, null)
+  rmSync(root, { recursive: true, force: true })
+})
+
 test('yaml subset parser: mappings, sequences and scalars', () => {
   const value = parseYaml([
     'schema: 1',

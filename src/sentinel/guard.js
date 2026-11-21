@@ -42,7 +42,7 @@ import { canonicalizePath, getHomeDir, isWithin, pathKey } from '../util.js'
 import { parseDeleteIntent } from '../delete/parser.js'
 
 const DESTRUCTIVE_VERB = /\b(?:rm|rmdir|del|erase|rd|remove-item|remove|unlink|mv|move|move-item|ren|rename|rename-item|trash|shred|delete|robocopy(?:\s+\S+){2}\s+\/mir|\/mir)\b/i
-const WRITE_VERB = /\b(?:set-content|add-content|out-file|tee-object|tee|new-item|touch|copy-item|move-item|rename-item|mkdir|robocopy|xcopy|clear-content|sed\s+-i|perl\s+-pi|apply_patch|git\s+(?:apply|checkout|reset|clean)|npm\s+(?:install|ci|uninstall|update)|pnpm\s+(?:add|install|remove|update)|yarn\s+(?:add|install|remove))\b|[^>|]\d?>{1,2}\s*[^&|\s]/i
+const WRITE_VERB = /\b(?:set-content|add-content|out-file|tee-object|tee|new-item|touch|copy-item|move-item|rename-item|mkdir|robocopy|xcopy|clear-content|sed\s+-i|perl\s+-pi|apply_patch|git\s+(?:apply|checkout|reset|clean)|npm\s+(?:install|ci|uninstall|update)|pnpm\s+(?:add|install|remove|update)|yarn\s+(?:add|install|remove))\b/i
 const PATH_TOOL = /^(?:delete_file|remove_file|delete|remove|unlink|move_file|move|rename|trash)$/i
 const WRITE_PATH_TOOL = /^(?:write|write_file|edit|edit_file|patch|apply_patch|applypatch|create_file|multi_edit|update_file|str_replace_editor|insert_text|replace_text)$/i
 const MANAGER_TOOL = /^(?:plugin_manager|plugin-manager|dsh_plugin_manager)$/i
@@ -301,12 +301,7 @@ export function inspectSelfProtection(execution, options) {
       } catch {
         intent = null
       }
-      const mention = text => {
-        const hitPath = protectedCommandHit(withoutCwdOperands(text))
-        if (hitPath) return hitPath
-        // Unresolved targets after `cd <protectedDir>` are still relative to it.
-        return protectedHit(commandCwd)
-      }
+      const mention = text => protectedCommandHit(withoutCwdOperands(text))
       const moveDelete = (intent?.statements ?? []).filter(statement =>
         statement.isDelete === true || /^(?:move|rename)/i.test(String(statement.command ?? '')))
       if (moveDelete.length > 0) {
