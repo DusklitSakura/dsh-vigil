@@ -944,6 +944,36 @@ test('AST pass: findings are deduplicated per line in the final report', async (
   rmSync(root, { recursive: true, force: true })
 })
 
+test('static audit: scan.ast.level maps AST hits to notice/review/blocker', async () => {
+  const root = tempDir()
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ast-level', version: '1.0.0' }))
+  mkdirSync(join(root, 'src'))
+  // Only the AST pass can see this call: no literal spawn/exec name is used.
+  writeFileSync(join(root, 'src', 'run.js'), [
+    "const cp = require('node:child_process')",
+    'const run = cp.exec',
+    'run("echo hi")',
+    '',
+  ].join('\n'))
+  const severityAt = async options => {
+    const report = await scanPluginDirectory(root, options)
+    return report.findings.find(item => item.ruleId === 'VG-DYN-02' && item.line === 3)?.severity ?? null
+  }
+  assert.equal(await severityAt({ ast: { level: 'low' } }), 'notice')
+  assert.equal(await severityAt({ ast: { level: 'medium' } }), 'review')
+  assert.equal(await severityAt({ ast: { level: 'high' } }), 'blocker')
+  assert.equal(await severityAt({ ast: { enabled: false } }), null)
+  assert.equal(await severityAt({}), 'review')
+  rmSync(root, { recursive: true, force: true })
+})
+
+test('config: an invalid scan.ast.level falls back to medium with a warning', () => {
+  const { config, warnings } = resolveConfig({ scan: { ast: { level: 'crazy' } } })
+  assert.equal(config.scan.ast.level, 'medium')
+  assert.ok(warnings.some(warning => /scan\.ast\.level/.test(warning)))
+  assert.equal(resolveConfig({ scan: { ast: { level: 'high' } } }).config.scan.ast.level, 'high')
+})
+
 test('yaml subset parser: mappings, sequences and scalars', () => {
   const value = parseYaml([
     'schema: 1',

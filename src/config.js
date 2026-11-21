@@ -150,6 +150,20 @@ export const DEFAULT_CONFIG = Object.freeze({
     enabled: true,
   },
   /**
+   * Static audit tuning (install-time gate and `vigil_scan`).
+   *
+   * `ast.level` maps an AST-derived capability hit to a severity:
+   *   low    -> notice   (report only)
+   *   medium -> review   (default; shows up in the report, no install question)
+   *   high   -> blocker  (the install gate asks before continuing)
+   */
+  scan: {
+    ast: {
+      enabled: true,
+      level: 'medium',
+    },
+  },
+  /**
    * External rule packs (YAML). Empty means `<DSH_HOME>/vigil/rules`; files there
    * are applied on top of the shipped pack, so threat data can be updated
    * without a plugin release.
@@ -242,6 +256,10 @@ export function resolveConfig(raw) {
     warnings.push('auditLog.anchor 必须是对象；已回退到默认值')
     config.auditLog.anchor = cloneDefault(DEFAULT_CONFIG.auditLog.anchor)
   }
+  if (!isPlainObject(config.scan.ast)) {
+    warnings.push('scan.ast 必须是对象；已回退到默认值')
+    config.scan.ast = cloneDefault(DEFAULT_CONFIG.scan.ast)
+  }
 
   if (config.mode !== 'enforce' && config.mode !== 'monitor') {
     warnings.push('mode 必须是 enforce 或 monitor；回退到 enforce')
@@ -250,6 +268,10 @@ export function resolveConfig(raw) {
   if (!['auto', 'en', 'zh'].includes(config.locale)) {
     warnings.push('locale 必须是 auto/en/zh；回退到 auto')
     config.locale = 'auto'
+  }
+  if (!['low', 'medium', 'high'].includes(config.scan.ast.level)) {
+    warnings.push('scan.ast.level 必须是 low/medium/high；回退到 medium')
+    config.scan.ast.level = 'medium'
   }
 
   validateDecisionFields(config, warnings)
@@ -367,6 +389,7 @@ function validateIntegers(config, warnings) {
     [config.notify.includeAsk, 'notify.includeAsk'],
     [config.notify.inlineApproval, 'notify.inlineApproval'],
     [config.auditLog.anchor.enabled, 'auditLog.anchor.enabled'],
+    [config.scan.ast.enabled, 'scan.ast.enabled'],
   ]) {
     if (typeof value !== 'boolean') warnings.push(`${label} 必须是布尔值；已按 truthy 处理`)
   }

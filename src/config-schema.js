@@ -88,7 +88,8 @@ function buildSchema(schema) {
   })
 
   /** Optional Sage engine adapter settings. */
-  const sage = () => schema.object({    enabled: flag(false).volatile(),
+  const sage = () => schema.object({
+    enabled: flag(false).volatile(),
     autoUpdate: flag(true).volatile(),
     updateIntervalMs: count(86400000).volatile(),
     required: flag(false).volatile(),
@@ -98,6 +99,14 @@ function buildSchema(schema) {
     sensitivity: text('balanced').volatile(),
     timeoutMs: count(2000).volatile(),
     disableNetworkChecks: flag(true).volatile(),
+  })
+
+  /** Static audit tuning (AST level). */
+  const scan = () => schema.object({
+    ast: schema.object({
+      enabled: flag(true).volatile(),
+      level: text('medium').volatile().description('low/medium/high → notice/review/blocker'),
+    }),
   })
 
   /** Quarantine store settings. */
@@ -153,6 +162,7 @@ function buildSchema(schema) {
     tools: schema.object({
       enabled: flag(true).volatile(),
     }),
+    scan: scan(),
     rules: schema.object({
       dir: text('').volatile().description('外部规则包目录（YAML）；留空使用 <DSH_HOME>/vigil/rules'),
     }),

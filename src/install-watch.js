@@ -49,6 +49,8 @@ export function createInstallWatcher(options = {}) {
   const profilesRoot = join(dshHome, 'profiles')
   const intervalMs = Math.max(5000, Number(options.intervalMs) || DEFAULT_INTERVAL_MS)
   const maxAudits = Math.max(1, Number(options.maxAudits) || MAX_AUDITS)
+  /** AST tuning handed to every background scan (from `config.scan.ast`). */
+  const ast = options.ast && typeof options.ast === 'object' ? options.ast : undefined
 
   /** @type {Map<string, DependencyEntry>|null} */
   let seen = null
@@ -133,6 +135,7 @@ export function createInstallWatcher(options = {}) {
       report = await scan(located.dir, {
         includeInfo: false,
         maxFiles: 400,
+        ast,
         // Cooperative scanning: the scanner yields to the event loop every 25
         // files, so a big package never freezes the Host while it is analysed.
         onProgress: () => {

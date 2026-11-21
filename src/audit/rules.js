@@ -601,10 +601,26 @@ function isWriteContext(codeLines, index) {
   return false;
 }
 
+/** Severity for an AST hit, driven by `scan.ast.level` (low/medium/high). */
+function astSeverity(level) {
+  if (level === 'high') return 'blocker';
+  if (level === 'low') return 'notice';
+  return 'review';
+}
+
+/** Effective severity of a raw finding (catalog fallback before materialize). */
+function effectiveSeverity(finding) {
+  if (typeof finding.severity === 'string') return finding.severity;
+  const catalog = RULE_CATALOG[finding.ruleId];
+  return catalog ? catalog[2] : 'review';
+}
+
+const SEVERITY_RANK = { info: 1, notice: 2, review: 3, blocker: 4 };
+
 /**
  * Audit a JS/TS source file through comment/string-aware masks.
  *
- * @param {{ file: string, text: string, isClient?: boolean }} context
+ * @param {{ file: string, text: string, isClient?: boolean, ast?: { enabled?: boolean, level?: string } }} context
  * @returns {RawFinding[]}
  */
 export function scanCodeFile(context) {
@@ -970,17 +986,28 @@ export function scanCodeFile(context) {
   // ---- AST pass: aliased capability calls (best effort) -------------------
   // Line-based rules miss `const cp = require(...); const run = cp.exec; run(x)`.
   // This pass parses the file once; any parse failure simply skips it.
-  if (/\.(?:[cm]?js)$/i.test(String(file ?? ''))) {
+  const astOptions = context?.ast && typeof context.ast === 'object' ? context.ast : {};
+  if (astOptions.enabled !== false && /\.(?:[cm]?js)$/i.test(String(file ?? ''))) {
     const ast = analyzeAliases(text);
+    const severity = astSeverity(astOptions.level);
     if (ast.ok) {
       for (const call of ast.calls) {
         if (!Number.isInteger(call.line) || call.line < 1) continue;
         const evidence = lineTextAt(text, call.line);
-        if (call.kind === 'child_process') {
-          add('VG-DYN-02', call.line, { vars: { api: call.name }, confidence: 'ast', evidence });
-        } else if (call.kind === 'eval') {
-          add('VG-DYN-01', call.line, { confidence: 'ast', evidence });
+        const ruleId = call.kind === 'child_process' ? 'VG-DYN-02' : 'VG-DYN-01';
+        const existing = findings.find(item => item.ruleId === ruleId && item.line === call.line);
+        if (existing) {
+          // A direct call may already have been caught by a regex rule; the
+          // configured level can only raise severity, never lower it.
+          if (SEVERITY_RANK[severity] > SEVERITY_RANK[effectiveSeverity(existing)]) existing.severity = severity;
+          continue;
         }
+        add(ruleId, call.line, {
+          ...(call.kind === 'child_process' ? { vars: { api: call.name } } : {}),
+          confidence: 'ast',
+          evidence,
+          severity,
+        });
       }
     }
   }

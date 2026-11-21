@@ -106,6 +106,11 @@ function normalizeOptions(options) {
     deadlineAt: Number(source.deadlineAt) > 0 ? Number(source.deadlineAt) : 0,
     /** Optional progress hook: (relativePath) => void. */
     onProgress: typeof source.onProgress === 'function' ? source.onProgress : null,
+    /** AST alias analysis tuning: enabled + level (low/medium/high). */
+    ast: {
+      enabled: !(source.ast && source.ast.enabled === false),
+      level: ['low', 'medium', 'high'].includes(source.ast?.level) ? source.ast.level : 'medium',
+    },
   };
 }
 
@@ -712,6 +717,7 @@ export async function scanPluginDirectory(dir, options = {}) {
           file: relativeFile,
           text,
           isClient: isClientFile(relativeFile, pkg),
+          ast: scanOptions.ast,
         }));
       }
       scanOptions.onProgress?.(relativeFile);

@@ -150,6 +150,8 @@ bundle 行的 `config` 仍被接受（例如在团队里分发基线、或设置
 | `allowSelfUninstall` | `false` | 是否允许代理通过工具卸载/替换本插件 |
 | `selfProtection` | `deny` | 删除/移动/写入/编辑插件自身目录或状态目录、或经工具卸载/停用/替换插件时的决策：`deny`（默认，直接拦截）或 `ask`（在对话内等你允许/拒绝） |
 | `rules.dir` | `''` | 外部规则包目录（YAML）；留空用 `<DSH_HOME>/vigil/rules`。见下文「规则包」 |
+| `scan.ast.enabled` | `true` | 是否启用 acorn 的 AST 别名分析（关闭后静态审计只用正则） |
+| `scan.ast.level` | `medium` | AST 命中的等级：`low` → 提示级 / `medium` → 可疑 / `high` → 高危（安装前询问是否继续）；只升不降，正则已判更高时保持原级 |
 | `killSwitch.enabled` / `killSwitch.path` / `killSwitch.envVar` | `true` / `<DSH_HOME>/vigil/DISABLED` / `DSH_VIGIL_DISABLED` | 紧急停用开关 |
 
 ### `sentinel`（运行时规则）
@@ -304,7 +306,7 @@ secretTokens:
 - **强制移动先询问**（`VG-RT-13`）：`Move-Item -Force`（及 `mv -f`）会静默覆盖目标原有内容，按询问处理。
 - **截断类写入按破坏性处理**：`Clear-Content`、`Set-Content`、`Out-File` 会清空/覆盖文件，走保护根与规模判定；这类操作**不会**被移入隔离区（移动文件并不等于截断，恢复后语义会变）。`>`（含 `2>`）重定向同样按截断处理，`>>` 只追加、`> $null` / `> NUL` 不算。
 - **编码载荷解码**：`Buffer.from('<base64>','base64')`、`atob(...)`、`FromBase64String(...)` 与十六进制转义会先解码，再用外发/执行规则检查；变量之间传递的编码载荷无法静态还原（见已知限制 2）。
-- **AST 别名分析**：对 `.js/.mjs/.cjs` 用 acorn 解析一次，跟踪 `const cp = require('child_process')`、`const { spawn: launch } = ...`、`const run = cp.exec` 等本地别名，把真正调用点报成 `VG-DYN-02`/`VG-DYN-01`；解析失败（TS/JSX/语法错误）自动回退到正则，acorn 不可用时同样回退。
+- **AST 别名分析**：对 `.js/.mjs/.cjs` 用 acorn 解析一次，跟踪 `const cp = require('child_process')`、`const { spawn: launch } = ...`、`const run = cp.exec` 等本地别名，把真正调用点报成 `VG-DYN-02`/`VG-DYN-01`；解析失败（TS/JSX/语法错误）自动回退到正则，acorn 不可用时同样回退。命中等级由 `scan.ast.level` 控制（low=提示 / medium=可疑 / high=高危）。
 - **非文本不再静默**：图片/二进制等按 `nonTextFiles` 计数并显示在扫描限制里；目录名恰好是 `*.js` 时会正常递归，不会被当成文件跳过。
 - **路径判定先规范化**：`~`、`$env:`、`%VAR%`、8.3 短名、junctions、`\\?\` 先归一再比保护根；`write/edit` 的正文内容不算“路径修改”。
 - **PowerShell 优先**：在 Windows 上，命令里出现盘符或反斜杠路径时按 PowerShell 语义解析（`rm -rf D:\x` 是 `Remove-Item` 别名，不会把 `\` 当转义吃掉）；`-rf`/`-fr` 视为 `-Recurse -Force`（PowerShell 本身不接受组合短选项）。

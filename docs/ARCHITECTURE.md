@@ -173,7 +173,7 @@ plugin_manager 工具 ───▶│ hook.js 安装前扫描（本地路径） 
 23. `>` / `2>` 重定向按截断处理（`deleteKind: 'truncate'`），`>>` 只追加、`> $null`/`NUL`/`/dev/null` 不算；截断与 `Clear-Content` 一样不进隔离区。
 24. 外部规则包在 `reloadRulePack` 里必须对照 `rules-lock.json`：已 pin 的文件哈希不符或未登记 → 跳过该文件并告警，绝不让被篡改的规则静默生效。
 25. 自扫描降级只认 manifest 里的 `dsh.vigil.selfScan === true`，且只降级 `test/**`；不能按目录名或包名硬编码，否则等于给恶意包开口子。
-26. AST 别名分析是可选增强：acorn 只用于建本地别名表与调用点，解析失败/依赖缺失必须回退正则；不得让 acorn 的异常影响扫描主流程。
+26. AST 别名分析是可选增强：acorn 只用于建本地别名表与调用点，解析失败/依赖缺失必须回退正则；不得让 acorn 的异常影响扫描主流程。命中等级由 `scan.ast.level` 映射为 notice/review/blocker（只升不降）。
 
 ## 8. 维护清单
 

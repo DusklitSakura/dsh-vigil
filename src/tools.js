@@ -115,7 +115,7 @@ export function registerTools(ctx, deps) {
       // A wrong path is an input error, not a security finding: do not report it
       // as a `blocker` (that would read as "this plugin is dangerous").
       if (!isDirectory) throw new Error(`vigil_scan 需要一个插件目录：${target} 不存在或不是目录`)
-      const report = await scanPluginDirectory(target)
+      const report = await scanPluginDirectory(target, { ast: runtime().config.scan?.ast })
       // Record only meaningful scans: a clean package does not need an audit
       // entry per call, but findings and unreadable targets do.
       const summary = report?.summary ?? {}

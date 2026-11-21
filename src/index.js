@@ -311,6 +311,7 @@ export async function apply(ctx, config) {
   // profiles' dependency sets and scans newly added bundles after the fact.
   const installWatcher = createInstallWatcher({
     logger,
+    ast: config.scan?.ast,
     record: entry => {
       try {
         runtime?.audit?.record(entry)

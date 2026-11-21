@@ -251,6 +251,7 @@ export function createInterceptor(options) {
                 includeInfo: false,
                 maxFiles: 200,
                 deadlineAt,
+                ast: config.scan?.ast,
               })
               const report = await Promise.race([
                 scanPromise,
