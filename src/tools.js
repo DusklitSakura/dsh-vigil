@@ -73,8 +73,8 @@ export function registerTools(ctx, deps) {
     name: 'vigil_scan',
     description: [
       'Statically audit a dsh plugin package before installing or trusting it.',
-      'Reads package.json, cordis.patch.yml and source files with regular expressions and a comment/string-aware masker; it NEVER imports or executes the scanned code.',
-      'Returns findings with file and line evidence, a severity (blocker/review/notice/info), a "what this means" narrative, and one mitigation step.',
+      'Reads package.json, cordis.patch.yml and source files with regular expressions, a comment/string-aware masker and (for JS) optional AST alias analysis via acorn; it NEVER imports or executes the scanned code.',
+      'Returns findings with file and line evidence, a severity (blocker/review/notice/info), a "what this means" narrative, and one mitigation step. AST hit severity follows the scan.ast.level setting (low/medium/high).',
       'Paths may be outside the workspace; the scan is read-only.',
     ].join(' '),
     parameters: {
@@ -189,6 +189,10 @@ export function registerTools(ctx, deps) {
           sources: Array.isArray(current.rulePack?.sources) ? current.rulePack.sources : [],
           warnings: Array.isArray(current.rulePack?.warnings) ? current.rulePack.warnings : [],
           externalDir: current.config.rules?.dir || '',
+        },
+        scan: {
+          astEnabled: current.config.scan?.ast?.enabled !== false,
+          astLevel: ['low', 'medium', 'high'].includes(current.config.scan?.ast?.level) ? current.config.scan.ast.level : 'medium',
         },
         installScan: deps.getInstallScan?.() ?? null,
         paths: current.config.paths,
@@ -655,6 +659,7 @@ function renderStatusCard(status) {
     status.audit.describe,
     status.sage.describe,
     `规则包：${status.rules.sources.length} 个来源${status.rules.externalDir ? `（外部目录 ${status.rules.externalDir}）` : '（仅内置）'}`,
+    `静态审计：AST 别名分析${status.scan?.astEnabled === false ? '已关闭' : `已启用 · 命中等级 ${status.scan?.astLevel ?? 'medium'}`}`,
     status.installScan?.description ?? null,
     status.integrity.describe,
     `状态目录：${status.paths.stateDir}`,
