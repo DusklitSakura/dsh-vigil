@@ -35,10 +35,13 @@ jobs:
         run: node --check client.js
 
       - name: Unit and integration tests
-        run: node --test
+        run: node --test "test/*.test.js"
 
       - name: Coverage gate (lines/branches/functions)
-        run: node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-lines=85 --test-coverage-branches=72 --test-coverage-functions=82
+        run: node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-lines=85 --test-coverage-branches=72 --test-coverage-functions=82 "test/*.test.js"
+
+      - name: Rule catalog audit
+        run: node scripts/rule-audit.mjs --strict
 
       - name: Packed file list check
         run: npm pack --dry-run

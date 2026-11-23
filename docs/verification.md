@@ -126,7 +126,7 @@
 | --- | --- | --- |
 | Client 语法 | `node --check client.js` | 通过 |
 | 全量测试 | `node --test --test-concurrency=1 "test/*.test.js"` | 388 项 / 387 通过 / 0 失败 |
-| 覆盖率门槛 | `--test-coverage-lines=85 --branches=72 --functions=82` | 87.24 / 74.56 / 84.35，通过 |
+| 覆盖率门槛 | `--test-coverage-lines=85 --branches=72 --functions=82` | 87.24 / 74.58 / 84.35，通过 |
 | 规则名册 | `node scripts/rule-audit.mjs --strict` | 71 条规则 · 41 夹具 · 30 豁免 · 0 错误 · 0 欠账 |
 | 静态审计 smoke | `npm run smoke:audit` | 恶意 `postinstall` 样本命中 `VG-SUP-01`，报告可导出 |
 | 删除解析 smoke | `npm run smoke:parser` | PowerShell / cmd / POSIX / 编码命令样本解析符合预期 |
