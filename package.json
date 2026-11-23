@@ -34,10 +34,8 @@
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "rules",
+    "rules/*.yaml",
     "docs/DETAIL.md",
-    "threats",
-    "illustrations",
     "icon.png",
     "README.md"
   ],

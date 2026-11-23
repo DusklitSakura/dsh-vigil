@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/dsh-vigil-banner.webp" alt="DSH VIGIL — DeepSeek Harness Guardian" width="100%" />
+  <img src="https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/assets/dsh-vigil-banner.webp" alt="DSH VIGIL — DeepSeek Harness Guardian" width="100%" />
 </p>
 
 <h1 align="center">DSH VIGIL · 守夜人</h1>
