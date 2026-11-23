@@ -26,21 +26,20 @@
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { acquireAuditLog, createAuditLog } from './audit-log.js'
-import { createAuditFeedRoute } from './audit-feed.js'
-import { createAuditClearRoute } from './audit-clear-route.js'
-import { createSageActionRoute } from './sage-action-route.js'
-import { createApprovalQueue, createApprovalRoute } from './approval.js'
-import { createQuarantineRoute } from './quarantine-route.js'
-import { createInstallScanRoute } from './install-scan-route.js'
+import { acquireAuditLog } from './audit-log.js'
+import { createApprovalQueue } from './approval.js'
+import { attachPluginManagerGate } from './install-gate.js'
+import { lookupBaseline, recordBaseline } from './install-baseline.js'
+import { queryOsv } from './audit/advisories.js'
+import { queryDependencyAdvisories } from './audit/dep-advisories.js'
+import { loadTrustPins, recordTrustPin } from './trust-store.js'
+import { createRouteRegistry } from './routes.js'
+import { createRuntimeGuard } from './sentinel/runtime-guard.js'
+import { createCanary } from './sentinel/canary.js'
+import { buildRuntime } from './runtime.js'
 
-import { applyRulesUpdate, checkRulesUpdate, createRulesUpdateRoute } from './rules/update.js'
-import { createArtworkRoute } from './artwork-route.js'
-import { createAlertWindowRoute } from './alert-route.js'
+import { applyRulesUpdate, checkRulesUpdate } from './rules/update.js'
 import { createInstallWatcher } from './install-watch.js'
-import { createInterceptor } from './sentinel/hook.js'
-import { createSelfGuard } from './sentinel/guard.js'
-import { createSageEngine } from './sentinel/sage.js'
 import {
   SAGE_DEFAULT_UPDATE_INTERVAL_MS,
   checkSageUpdate,
@@ -49,15 +48,12 @@ import {
   readProvisionReceipt,
   writeProvisionReceipt,
 } from './sage-provision.js'
-import { createIntegrity } from './integrity.js'
-import { createQuarantine } from './delete/quarantine.js'
-import { createDeletePolicy } from './delete/policy.js'
-import { resolveConfig, killSwitchState } from './config.js'
+import { killSwitchState } from './config.js'
 import { Config } from './config-schema.js'
 import { configFingerprint, snapshotConfig } from './live-config.js'
 import { registerTools } from './tools.js'
-import { getRulePack, reloadRulePack } from './rules/pack.js'
-import { isWithin, readJson, resolvePath, truncate } from './util.js'
+import { getRulePack } from './rules/pack.js'
+import { DEFAULT_APPROVAL_TIMEOUT_MS, readJson, resolvePath, truncate } from './util.js'
 
 /** Loader-visible plugin name. */
 export const name = 'dsh-vigil'
@@ -97,157 +93,6 @@ function createLogger() {
         // ignore
       }
     },
-  }
-}
-
-/**
- * Fallback integrity monitor so a failed baseline setup cannot disable the whole
- * guard chain; it reports the failure through the status tool.
- * @param {string} message
- * @param {string} version
- * @returns {any}
- */
-function degradedIntegrity(message, version) {
-  return {
-    enabled: false,
-    pluginDir: PLUGIN_DIR,
-    state: {
-      baseline: { state: 'error', changed: [], added: [], missing: [], version, checkedAt: null },
-      canary: { state: 'error', reason: '初始化失败' },
-      signature: { state: 'disabled', reason: null },
-      heartbeat: { state: 'unchecked', reason: null },
-    },
-    get alerts() {
-      return [`完整性监控初始化失败：${message}`]
-    },
-    check() {},
-    markHeartbeat: fn => fn,
-    verifyHeartbeat: () => {},
-    writeBaseline: () => ({ ok: false, version, files: 0, error: '初始化失败' }),
-    startTimer: () => () => {},
-    rebaseline: () => ({ ok: false, version, files: 0, error: '初始化失败' }),
-    describe: () => '完整性：初始化失败',
-  }
-}
-
-/**
- * Build one complete runtime generation from a plain config snapshot.
- * Each subsystem degrades independently; the caller swaps the generation only
- * after everything that can be built has been built.
- * @param {unknown} plain plain config snapshot
- * @param {{ logger: any, version: string, isDisabled: () => boolean, pluginDir: string, cwd: string }} deps
- * @returns {Promise<any>}
- */
-async function buildRuntime(plain, deps) {
-  const { config, warnings } = resolveConfig(plain)
-  const { logger, version } = deps
-  // Relative delete targets and the `high` project root need the *workspace*,
-  // not the host process cwd (the Desktop app runs from the profile directory).
-  // An explicit `deleteGuard.projectRoot` wins; otherwise the host cwd is used
-  // only when it is a real workspace, never when it lives inside the Harness
-  // home. Unknown stays unknown so the policy asks instead of guessing.
-  const hostCwd = resolve(deps.hostCwd ?? process.cwd())
-  const configuredRoot = config.deleteGuard.projectRoot
-    ? resolvePath(config.deleteGuard.projectRoot, hostCwd)
-    : ''
-  const baseCwd = configuredRoot || (isWithin(config.paths.dshHome, hostCwd) ? '' : hostCwd)
-  // Rule data (credential paths, secret shapes, egress APIs, …) lives in YAML
-  // packs so it can be updated without shipping a plugin release. The shipped
-  // pack is read from the package; `rules.dir` overrides it on top.
-  let rulePack = null
-  try {
-    const externalDir = config.rules.dir
-      ? resolvePath(config.rules.dir, config.paths.stateDir)
-      : join(config.paths.stateDir, 'rules')
-    rulePack = reloadRulePack({ externalDir, lockPath: join(config.paths.stateDir, 'rules-lock.json'), logger })
-    for (const warning of rulePack.warnings) warnings.push(`规则包：${warning}`)
-  } catch (error) {
-    logger.warn(`[dsh-vigil] 规则包加载失败，继续使用内置规则：${String(error)}`)
-  }
-  // One sink per log directory per process: rebuilds and HMR replacements must
-  // not race two chain heads over the same JSONL file.
-  const audit = typeof deps.acquireAudit === 'function' ? deps.acquireAudit(config, logger) : createAuditLog(config, logger)
-
-  /** @type {any} */
-  let quarantine
-  try {
-    quarantine = createQuarantine(config, logger)
-  } catch (error) {
-    logger.warn(`[dsh-vigil] 隔离区初始化失败，已禁用可逆化删除：${String(error)}`)
-    quarantine = createQuarantine({ ...config, quarantine: { ...config.quarantine, enabled: false } }, logger)
-  }
-
-  const policy = createDeletePolicy(config, { quarantine, logger, cwd: baseCwd })
-
-  /** @type {any} */
-  let integrity
-  try {
-    integrity = createIntegrity(config, {
-      logger,
-      pluginDir: deps.pluginDir,
-      record: entry => audit.record({
-        kind: 'integrity',
-        event: entry.event,
-        tool: null,
-        decision: 'none',
-        ruleIds: entry.ruleIds ?? [],
-        reason: entry.reason,
-      }),
-    })
-  } catch (error) {
-    logger.warn(`[dsh-vigil] 完整性监控初始化失败：${String(error)}`)
-    integrity = degradedIntegrity(String(error), version)
-  }
-
-  /** @type {any} */
-  let sage
-  try {
-    sage = await createSageEngine(config, logger)
-  } catch (error) {
-    logger.warn(`[dsh-vigil] Sage 适配器初始化失败：${String(error)}`)
-    sage = {
-      status: { state: 'error', reason: String(error), rules: 0 },
-      evaluate: async () => (config.sage.required
-        ? { kind: 'deny', reason: 'Sage 不可用', ruleIds: ['VG-SAGE-ERR'], sage: { source: 'sage', error: true } }
-        : null),
-      ready: false,
-      describe: () => `Sage：初始化失败（${String(error)}）`,
-      attribution: threatId => `规则 ${threatId} 来自 Sage`,
-    }
-  }
-
-  const interceptor = createInterceptor({
-    config,
-    audit,
-    policy,
-    sage,
-    integrity,
-    approval: deps.approval ?? null,
-    logger,
-    isDisabled: deps.isDisabled,
-    cwd: baseCwd,
-    pluginDir: deps.pluginDir,
-  })
-  const guard = createSelfGuard({
-    config,
-    pluginDir: deps.pluginDir,
-    isDisabled: deps.isDisabled,
-    logger,
-  })
-
-  return {
-    config,
-    warnings,
-    baseCwd,
-    rulePack,
-    audit,
-    quarantine,
-    policy,
-    integrity,
-    sage,
-    interceptor,
-    guard,
-    fingerprint: configFingerprint(plain),
   }
 }
 
@@ -391,19 +236,7 @@ export async function apply(ctx, config) {
     disposers.push(() => clearInterval(timer))
   }
   /** Authenticated browser routes and whether each one registered. */
-  const ROUTE_LABELS = [
-    '审计数据路由',
-    '审计清理路由',
-    'Sage 维护路由',
-    '对话内审批路由',
-    '隔离区路由',
-    '手动插件扫描路由',
-    '规则库更新路由',
-    '插图资源路由',
-    '审批提醒路由',
-  ]
-  /** @type {Map<string, string>} */
-  const routeStatus = new Map(ROUTE_LABELS.map(label => [label, 'pending']))
+  const routes = createRouteRegistry({ logger })
 
   const snapshot = () => snapshotConfig(config)
   const isDisabled = () => Boolean(runtime) && killSwitchState(runtime.config, { existsSync }).active
@@ -412,7 +245,7 @@ export async function apply(ctx, config) {
   // volatile-config rebuild, and its timeout follows the live config.
   const approvalQueue = createApprovalQueue({
     logger,
-    getTimeoutMs: () => Number(runtime?.config?.notify?.approvalTimeoutMs) || 120000,
+    getTimeoutMs: () => Number(runtime?.config?.notify?.approvalTimeoutMs) || DEFAULT_APPROVAL_TIMEOUT_MS,
     // The queue survives runtime rebuilds, so resolve the current sink lazily.
     audit: {
       record: entry => {
@@ -441,6 +274,56 @@ export async function apply(ctx, config) {
     },
   })
   disposers.push(() => installWatcher.stop())
+  // The plugin page installs through the Host service, not through a tool call,
+  // so `tools/pre-execute` never saw it: no scan, no question, no audit record.
+  // Attach the same audit to that surface; the question reuses the plugin's own
+  // dialog by parking it in the shared approval queue.
+  try {
+    const attach = child => {
+      const detach = attachPluginManagerGate(child, {
+        approval: approvalQueue,
+        logger,
+        getConfig: () => snapshotConfig(config),
+        getBaseDir: () => {
+          try {
+            return typeof child.get === 'function' ? child.get('profileContext')?.dir : undefined
+          } catch {
+            return undefined
+          }
+        },
+        record: entry => {
+          try {
+            runtime?.audit?.record?.(entry)
+          } catch {
+            // auditing is best-effort
+          }
+        },
+        baseline: {
+          lookup: name => lookupBaseline(snapshotConfig(config).paths.stateDir, name),
+          record: entry => recordBaseline(snapshotConfig(config).paths.stateDir, entry),
+        },
+        advisories: async ({ name, version }) => {
+          const cfg = snapshotConfig(config)
+          if (cfg.scan?.osv?.enabled !== true) return { ok: true, advisories: [] }
+          return queryOsv({ name, version, url: cfg.scan.osv.url, timeoutMs: cfg.scan.osv.timeoutMs })
+        },
+        depAdvisories: async ({ dir }) => {
+          const cfg = snapshotConfig(config)
+          if (cfg.scan?.osv?.enabled !== true) return { ok: true, checked: 0, advisories: [] }
+          return queryDependencyAdvisories({ dir, url: cfg.scan.osv.url, timeoutMs: cfg.scan.osv.timeoutMs })
+        },
+        trustPins: () => loadTrustPins(snapshotConfig(config).paths.stateDir),
+        trustPin: entry => recordTrustPin(snapshotConfig(config).paths.stateDir, entry),
+      })
+      if (typeof detach !== 'function') return
+      if (typeof child.effect === 'function') child.effect(() => detach)
+      else disposers.push(detach)
+    }
+    if (typeof ctx.inject === 'function') ctx.inject(['pluginManager'], attach)
+    else attach(ctx)
+  } catch (error) {
+    logger.warn(`[dsh-vigil] 页面安装审计挂载失败：${String(error)}`)
+  }
 
   /**
    * Rebuild the runtime from the live config snapshot.
@@ -457,6 +340,37 @@ export async function apply(ctx, config) {
       try {
         const next = await buildRuntime(snapshot(), { logger, version, isDisabled, acquireAudit, approval: approvalQueue, pluginDir: PLUGIN_DIR, hostCwd })
         const previous = runtime
+        // Canary: a bait file under the state dir whose token is watched in
+        // outbound requests. Planted per generation so the token rotates.
+        let canary = null
+        if (next.config.sentinel.canary === true) {
+          try {
+            canary = createCanary({ stateDir: next.config.paths.stateDir })
+            if (!canary.plant()) {
+              logger.warn('[dsh-vigil] 蜜罐诱饵文件写入失败，canary 检测未启用')
+              canary = null
+            }
+          } catch (error) {
+            logger.warn(`[dsh-vigil] 蜜罐初始化失败：${String(error)}`)
+            canary = null
+          }
+        }
+        // In-process guard: only installed when `sentinel.runtimeGuard` is on.
+        // It is recreated per generation so its wrappers record into the new
+        // audit sink; the previous generation's wrappers are removed first.
+        try {
+          const guardState = createRuntimeGuard({ config: next.config, audit: next.audit, logger, canary }).attach()
+          next.runtimeGuard = guardState
+        } catch (error) {
+          logger.warn(`[dsh-vigil] 运行时守卫挂载失败：${String(error)}`)
+          next.runtimeGuard = null
+        }
+        next.canary = canary
+        try {
+          previous?.runtimeGuard?.detach?.()
+        } catch {
+          // a disposed generation needs no restoration
+        }
         runtime = next
         // The registered wrappers outlive a generation: re-tag them so the new
         // heartbeat monitor sees its own guards, then record the transition.
@@ -836,7 +750,7 @@ export async function apply(ctx, config) {
         }),
         getApproval: () => approvalQueue,
         getCwd: () => runtime.baseCwd,
-        getRoutes: () => Object.fromEntries(routeStatus),
+        getRoutes: () => routes.snapshot(),
         runRulesUpdate,
         getRulesUpdateState: () => rulesUpdateState,
       }))
@@ -846,91 +760,33 @@ export async function apply(ctx, config) {
   }
 
   // ---- 3b. authenticated browser routes: audit feed + approval answers ----
-  // On a cold boot the `connection` service can be provided after this
+  // On a cold boot the connection service can be provided after this
   // plugin's apply, so register through ctx.inject instead of reading it once.
   try {
-    const registerBrowserRoutes = connection => {
-      if (!connection || !connection.fetch || typeof connection.fetch.register !== 'function') {
-        for (const label of ROUTE_LABELS) routeStatus.set(label, 'no-connection')
-        logger.warn('[dsh-vigil] 当前宿主没有 connection.fetch，对话内审计与审批界面将不可用')
-        return undefined
+    const attach = connection => {
+      const deps = {
+        getRuntime: () => runtime,
+        isDisabled,
+        approval: approvalQueue,
+        watcher: installWatcher,
+        version,
+        rebuild: reason => rebuild(reason),
+        getRulesUpdateState: () => rulesUpdateState,
+        runRulesUpdate,
       }
-      /**
-       * Register one route with a retry window: a restarted entry can briefly
-       * overlap the previous generation's exact path.
-       * @param {any} route
-       * @param {string} label
-       */
-      const registerRoute = (route, label) => {
-        let disposed = false
-        let stop = null
-        let attempts = 0
-        const attempt = () => {
-          if (disposed || stop) return
-          try {
-            stop = connection.fetch.register(route)
-            routeStatus.set(label, 'ok')
-          } catch (error) {
-            attempts += 1
-            if (attempts >= 12) {
-              routeStatus.set(label, `failed: ${error instanceof Error ? error.message : String(error)}`)
-              logger.warn(`[dsh-vigil] ${label}注册失败：${String(error)}`)
-              return
-            }
-            setTimeout(attempt, 250)
-          }
-        }
-        attempt()
-        return () => {
-          disposed = true
-          try {
-            const result = stop?.()
-            if (result && typeof result.catch === 'function') result.catch(() => {})
-          } catch {
-            // route already gone
-          }
-        }
-      }
-      return [
-        registerRoute(createAuditFeedRoute({
-          getRuntime: () => runtime,
-          isDisabled,
-          limit: 300,
-          approval: approvalQueue,
-          installWatcher,
-          version,
-        }), '审计数据路由'),
-        registerRoute(createAuditClearRoute({ getRuntime: () => runtime }), '审计清理路由'),
-        registerRoute(createSageActionRoute({
-          getRuntime: () => runtime,
-          rebuild: reason => rebuild(reason),
-        }), 'Sage 维护路由'),
-        registerRoute(createApprovalRoute({
-          getQueue: () => approvalQueue,
-          getWatcher: () => installWatcher,
-        }), '对话内审批路由'),
-        registerRoute(createQuarantineRoute({ getQuarantine: () => runtime?.quarantine }), '隔离区路由'),
-        registerRoute(createInstallScanRoute({ getWatcher: () => installWatcher }), '手动插件扫描路由'),
-        registerRoute(createRulesUpdateRoute({
-        getState: () => rulesUpdateState,
-        run: runRulesUpdate,
-        logger,
-      }), '规则库更新路由'),
-      registerRoute(createArtworkRoute({ pluginDir: PLUGIN_DIR }), '插图资源路由'),
-      registerRoute(createAlertWindowRoute(), '审批提醒路由'),
-      ]
+      return routes.attach(connection, deps)
     }
     if (typeof ctx.inject === 'function') {
       ctx.inject(['connection'], child => {
         try {
-          const stops = registerBrowserRoutes(typeof child.get === 'function' ? child.get('connection') : undefined)
+          const stops = attach(typeof child.get === 'function' ? child.get('connection') : undefined)
           if (stops) child.effect(() => () => { for (const stop of stops) stop() })
         } catch (error) {
           logger.warn(`[dsh-vigil] 无法注册浏览器数据路由：${String(error)}`)
         }
       })
     } else {
-      const stops = registerBrowserRoutes(typeof ctx.get === 'function' ? ctx.get('connection') : undefined)
+      const stops = attach(typeof ctx.get === 'function' ? ctx.get('connection') : undefined)
       if (stops) disposers.push(...stops)
     }
   } catch (error) {

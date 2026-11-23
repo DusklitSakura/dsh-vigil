@@ -19,7 +19,7 @@
  */
 
 import { join } from 'node:path'
-import { isPlainObject, deepMerge, resolvePath, getDshHome } from './util.js'
+import { DEFAULT_APPROVAL_TIMEOUT_MS, isPlainObject, deepMerge, resolvePath, getDshHome } from './util.js'
 
 /** @typedef {'allow'|'ask'|'deny'} DecisionKind */
 
@@ -82,6 +82,10 @@ export const DEFAULT_CONFIG = Object.freeze({
      */
     destructiveData: 'ask',
     /** Extra tool names that are audited but never blocked. */
+    /** In-process guard over destructive fs / download-and-exec calls (off by default). */
+    runtimeGuard: false,
+    /** Plant a credential-shaped bait file and watch outbound requests for its token. */
+    canary: false,
     allowTools: [],
   },
   deleteGuard: {
@@ -173,10 +177,23 @@ export const DEFAULT_CONFIG = Object.freeze({
    *   medium -> review   (default; shows up in the report, no install question)
    *   high   -> blocker  (the install gate asks before continuing)
    */
+  /** Content-hash trust for official packages (names that claim official status). */
+  trust: {
+    /** Exact names or scopes (`@scope`, `@scope/*`) considered official. */
+    officialPackages: [],
+    /** `name@version=sha256` pins; the store under the state dir adds TOFU pins. */
+    pins: [],
+  },
   scan: {
     ast: {
       enabled: true,
       level: 'medium',
+    },
+    /** OSV vulnerability lookup at install time (off by default: needs network). */
+    osv: {
+      enabled: false,
+      url: 'https://api.osv.dev/v1/query',
+      timeoutMs: 2500,
     },
   },
   /**
@@ -209,7 +226,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     /** Answer `ask` decisions in the conversation instead of the host dialog. */
     inlineApproval: true,
     /** How long an inline approval may wait before failing closed. */
-    approvalTimeoutMs: 120000,
+    approvalTimeoutMs: DEFAULT_APPROVAL_TIMEOUT_MS,
     /**
      * Approval alerts shown while the page/window is not focused, so an
      * approval is not missed while working in another application.

@@ -1,0 +1,6 @@
+{
+  "name": "dsh-vigil-fixture-cred-02",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/key.js"
+}

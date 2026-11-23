@@ -20,13 +20,13 @@ import { ESC, MAX_TOKENS, unmask, baseName } from './lex.js'
 import { POSIX_DELETE_COMMANDS as DELETE_COMMANDS } from './command-kinds.js'
 
 /** Shell keywords that may prefix a simple command inside a compound command. */
-const SKIP_WORDS = new Set(['do', 'then', 'else', 'elif', 'fi', 'done', 'esac', '!']);
+const SKIP_WORDS = new Set(['do', 'then', 'else', 'elif', 'fi', 'done', 'esac', '!'])
 
 /** Compound-statement keywords: such a chunk has no standalone delete command. */
-const COMPOUND_WORDS = new Set(['for', 'while', 'until', 'if', 'case', 'select', 'function']);
+const COMPOUND_WORDS = new Set(['for', 'while', 'until', 'if', 'case', 'select', 'function'])
 
 /** Commands understood by the pipeline backtracking heuristic. */
-const PRODUCER_COMMANDS = new Set(['find', 'ls', 'echo', 'printf']);
+const PRODUCER_COMMANDS = new Set(['find', 'ls', 'echo', 'printf'])
 
 /**
  * Merge glob kinds into a single `globKind` value.
@@ -34,9 +34,9 @@ const PRODUCER_COMMANDS = new Set(['find', 'ls', 'echo', 'printf']);
  * @returns {'none'|'asterisk'|'question'|'bracket'|'brace'|'mixed'}
  */
 function combineGlobKinds(kinds) {
-  if (!kinds || kinds.size === 0) return 'none';
-  if (kinds.size > 1) return 'mixed';
-  return kinds.values().next().value;
+  if (!kinds || kinds.size === 0) return 'none'
+  if (kinds.size > 1) return 'mixed'
+  return kinds.values().next().value
 }
 
 /**
@@ -62,7 +62,7 @@ function makePartial(fields) {
       rawTargets: [],
     },
     fields,
-  );
+  )
 }
 
 /**
@@ -80,12 +80,12 @@ function targetFromToken(token, extra) {
       globKind: token.globKind || 'none',
     },
     extra || {},
-  );
+  )
 }
 
 /** A synthetic `./` root token used when a command has no explicit path. */
 function dotToken() {
-  return { value: '.', raw: '.', hasGlob: false, globKind: 'none' };
+  return { value: '.', raw: '.', hasGlob: false, globKind: 'none' }
 }
 
 /**
@@ -96,37 +96,37 @@ function dotToken() {
  * @returns {number}
  */
 function findParenClose(src, open) {
-  let depth = 0;
-  let quote = null;
+  let depth = 0
+  let quote = null
   for (let i = open; i < src.length; i += 1) {
-    const c = src[i];
+    const c = src[i]
     if (quote === "'") {
-      if (c === "'") quote = null;
-      continue;
+      if (c === "'") quote = null
+      continue
     }
     if (quote === '"') {
       if (c === '\\') {
-        i += 1;
-        continue;
+        i += 1
+        continue
       }
-      if (c === '"') quote = null;
-      continue;
+      if (c === '"') quote = null
+      continue
     }
     if (c === "'" || c === '"') {
-      quote = c;
-      continue;
+      quote = c
+      continue
     }
     if (c === '\\') {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
-    if (c === '(') depth += 1;
+    if (c === '(') depth += 1
     else if (c === ')') {
-      depth -= 1;
-      if (depth === 0) return i;
+      depth -= 1
+      if (depth === 0) return i
     }
   }
-  return src.length;
+  return src.length
 }
 
 /**
@@ -138,12 +138,12 @@ function findParenClose(src, open) {
 function findBacktickEnd(src, start) {
   for (let i = start + 1; i < src.length; i += 1) {
     if (src[i] === '\\') {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
-    if (src[i] === '`') return i;
+    if (src[i] === '`') return i
   }
-  return src.length;
+  return src.length
 }
 
 /**
@@ -153,30 +153,30 @@ function findBacktickEnd(src, start) {
  * @returns {number} index of the closing `}`, or -1
  */
 function matchBraceExpansion(src, start) {
-  if (src[start] !== '{') return -1;
-  let depth = 0;
+  if (src[start] !== '{') return -1
+  let depth = 0
   for (let i = start; i < src.length; i += 1) {
-    const c = src[i];
+    const c = src[i]
     if (c === '\\') {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
     if (c === '{') {
-      depth += 1;
-      continue;
+      depth += 1
+      continue
     }
     if (c === '}') {
-      depth -= 1;
+      depth -= 1
       if (depth === 0) {
-        const inner = src.slice(start + 1, i);
-        if (!inner || /[\s;|&<>()]/.test(inner)) return -1;
-        return /,|\.\./.test(inner) ? i : -1;
+        const inner = src.slice(start + 1, i)
+        if (!inner || /[\s;|&<>()]/.test(inner)) return -1
+        return /,|\.\./.test(inner) ? i : -1
       }
-      continue;
+      continue
     }
-    if (/[\s;|&<>()]/.test(c)) return -1;
+    if (/[\s;|&<>()]/.test(c)) return -1
   }
-  return -1;
+  return -1
 }
 
 /**
@@ -187,11 +187,11 @@ function matchBraceExpansion(src, start) {
  */
 function hasClosingBracket(src, start) {
   for (let i = start + 1; i < src.length; i += 1) {
-    const c = src[i];
-    if (c === ']') return true;
-    if (/[\s;|&<>[\]]/.test(c)) return false;
+    const c = src[i]
+    if (c === ']') return true
+    if (/[\s;|&<>[\]]/.test(c)) return false
   }
-  return false;
+  return false
 }
 
 /**
@@ -206,198 +206,198 @@ function hasClosingBracket(src, start) {
  * @returns {Array<object>} tokens
  */
 function tokenizePosix(src) {
-  const tokens = [];
-  const n = src.length;
-  let i = 0;
+  const tokens = []
+  const n = src.length
+  let i = 0
 
   while (i < n && tokens.length < MAX_TOKENS) {
-    const c = src[i];
+    const c = src[i]
     if (c === ' ' || c === '\t' || c === '\r' || c === '\n') {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
     // Comment: `#` only starts a comment at a word boundary.
-    if (c === '#') break;
+    if (c === '#') break
     // Control characters / separators that survived the statement splitter.
     if (c === ';' || c === '&' || c === '|' || c === '(' || c === ')' || c === '!' || c === '}') {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
     if (c === '{' && matchBraceExpansion(src, i) < 0) {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
     // Redirection operator.
-    const opMatch = /^(?:[0-9]+)?(?:&>>|&>|>>|>|<<<|<<|<|>&|<&)/.exec(src.slice(i));
+    const opMatch = /^(?:[0-9]+)?(?:&>>|&>|>>|>|<<<|<<|<|>&|<&)/.exec(src.slice(i))
     if (opMatch) {
-      let op = opMatch[0];
-      i += op.length;
+      let op = opMatch[0]
+      i += op.length
       if (/[<>]$/.test(op)) {
-        const fd = /^&?\d+/.exec(src.slice(i));
+        const fd = /^&?\d+/.exec(src.slice(i))
         if (fd) {
-          op += fd[0];
-          i += fd[0].length;
+          op += fd[0]
+          i += fd[0].length
         }
       }
-      tokens.push({ op: true, value: op, raw: op });
-      continue;
+      tokens.push({ op: true, value: op, raw: op })
+      continue
     }
 
-    const before = i;
-    let value = '';
-    let raw = '';
-    let quote = null;
-    let quotedAny = false;
-    let hasSub = false;
-    const globKinds = new Set();
+    const before = i
+    let value = ''
+    let raw = ''
+    let quote = null
+    let quotedAny = false
+    let hasSub = false
+    const globKinds = new Set()
 
     while (i < n) {
-      const ch = src[i];
+      const ch = src[i]
       if (quote === "'") {
         if (ch === "'") {
-          quote = null;
-          i += 1;
-          continue;
+          quote = null
+          i += 1
+          continue
         }
-        if (ch === '$') value += ESC + '$';
-        else if (ch === '~' && value.length === 0) value += ESC + '~';
-        else value += ch;
-        raw += ch;
-        i += 1;
-        continue;
+        if (ch === '$') value += ESC + '$'
+        else if (ch === '~' && value.length === 0) value += ESC + '~'
+        else value += ch
+        raw += ch
+        i += 1
+        continue
       }
       if (quote === '"') {
         if (ch === '"') {
-          quote = null;
-          i += 1;
-          continue;
+          quote = null
+          i += 1
+          continue
         }
         if (ch === '\\') {
-          const next = src[i + 1];
+          const next = src[i + 1]
           if (next === '$' || next === '`' || next === '"' || next === '\\') {
-            value += ESC + next;
-            raw += next;
-            i += 2;
-            continue;
+            value += ESC + next
+            raw += next
+            i += 2
+            continue
           }
           if (next === '\n') {
-            i += 2;
-            continue;
+            i += 2
+            continue
           }
-          value += ch;
-          raw += ch;
-          i += 1;
-          continue;
+          value += ch
+          raw += ch
+          i += 1
+          continue
         }
         if (ch === '`') {
-          const end = findBacktickEnd(src, i);
-          const segment = src.slice(i, Math.min(end + 1, n));
-          value += segment;
-          raw += segment;
-          hasSub = true;
-          i = Math.min(end + 1, n);
-          continue;
+          const end = findBacktickEnd(src, i)
+          const segment = src.slice(i, Math.min(end + 1, n))
+          value += segment
+          raw += segment
+          hasSub = true
+          i = Math.min(end + 1, n)
+          continue
         }
         if (ch === '$' && src[i + 1] === '(') {
-          const end = findParenClose(src, i + 1);
-          const segment = src.slice(i, Math.min(end + 1, n));
-          value += segment;
-          raw += segment;
-          hasSub = true;
-          i = Math.min(end + 1, n);
-          continue;
+          const end = findParenClose(src, i + 1)
+          const segment = src.slice(i, Math.min(end + 1, n))
+          value += segment
+          raw += segment
+          hasSub = true
+          i = Math.min(end + 1, n)
+          continue
         }
-        value += ch;
-        raw += ch;
-        i += 1;
-        continue;
+        value += ch
+        raw += ch
+        i += 1
+        continue
       }
 
       // Unquoted context.
       if (ch === "'" || ch === '"') {
-        quote = ch;
-        quotedAny = true;
-        i += 1;
-        continue;
+        quote = ch
+        quotedAny = true
+        i += 1
+        continue
       }
       if (ch === '\\') {
-        const next = src[i + 1];
+        const next = src[i + 1]
         if (next === undefined) {
           // A trailing backslash is literal in our best-effort model
           // (e.g. the Windows root target `C:\` inside an `rm` command).
-          value += '\\';
-          raw += '\\';
-          i += 1;
-          continue;
+          value += '\\'
+          raw += '\\'
+          i += 1
+          continue
         }
         if (next === '\n') {
-          i += 2;
-          continue;
+          i += 2
+          continue
         }
-        if ('$%~*?[]{}'.includes(next)) value += ESC + next;
-        else value += next;
-        raw += next;
-        i += 2;
-        continue;
+        if ('$%~*?[]{}'.includes(next)) value += ESC + next
+        else value += next
+        raw += next
+        i += 2
+        continue
       }
       if (ch === '`') {
-        const end = findBacktickEnd(src, i);
-        const segment = src.slice(i, Math.min(end + 1, n));
-        value += segment;
-        raw += segment;
-        hasSub = true;
-        i = Math.min(end + 1, n);
-        continue;
+        const end = findBacktickEnd(src, i)
+        const segment = src.slice(i, Math.min(end + 1, n))
+        value += segment
+        raw += segment
+        hasSub = true
+        i = Math.min(end + 1, n)
+        continue
       }
       if (ch === '$' && src[i + 1] === '(') {
-        const end = findParenClose(src, i + 1);
-        const segment = src.slice(i, Math.min(end + 1, n));
-        value += segment;
-        raw += segment;
-        hasSub = true;
-        i = Math.min(end + 1, n);
-        continue;
+        const end = findParenClose(src, i + 1)
+        const segment = src.slice(i, Math.min(end + 1, n))
+        value += segment
+        raw += segment
+        hasSub = true
+        i = Math.min(end + 1, n)
+        continue
       }
-      if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') break;
-      if (ch === ';' || ch === '&' || ch === '|' || ch === '(' || ch === ')' || ch === '<' || ch === '>') break;
+      if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') break
+      if (ch === ';' || ch === '&' || ch === '|' || ch === '(' || ch === ')' || ch === '<' || ch === '>') break
       if (ch === '*') {
-        globKinds.add('asterisk');
-        value += ch;
-        raw += ch;
-        i += 1;
-        continue;
+        globKinds.add('asterisk')
+        value += ch
+        raw += ch
+        i += 1
+        continue
       }
       if (ch === '?') {
-        globKinds.add('question');
-        value += ch;
-        raw += ch;
-        i += 1;
-        continue;
+        globKinds.add('question')
+        value += ch
+        raw += ch
+        i += 1
+        continue
       }
       if (ch === '[') {
-        if (hasClosingBracket(src, i)) globKinds.add('bracket');
-        value += ch;
-        raw += ch;
-        i += 1;
-        continue;
+        if (hasClosingBracket(src, i)) globKinds.add('bracket')
+        value += ch
+        raw += ch
+        i += 1
+        continue
       }
       if (ch === '{') {
-        const end = matchBraceExpansion(src, i);
+        const end = matchBraceExpansion(src, i)
         if (end >= 0) {
-          globKinds.add('brace');
-          value += src.slice(i, end + 1);
-          raw += src.slice(i, end + 1);
-          i = end + 1;
-          continue;
+          globKinds.add('brace')
+          value += src.slice(i, end + 1)
+          raw += src.slice(i, end + 1)
+          i = end + 1
+          continue
         }
-        value += ch;
-        raw += ch;
-        i += 1;
-        continue;
+        value += ch
+        raw += ch
+        i += 1
+        continue
       }
-      value += ch;
-      raw += ch;
-      i += 1;
+      value += ch
+      raw += ch
+      i += 1
     }
 
     if (value.length > 0 || raw.length > 0) {
@@ -408,12 +408,12 @@ function tokenizePosix(src) {
         hasSub,
         hasGlob: globKinds.size > 0,
         globKind: combineGlobKinds(globKinds),
-      });
+      })
     }
     if (i === before) i += 1; // paranoia: always make progress
   }
 
-  return tokens;
+  return tokens
 }
 
 /**
@@ -422,16 +422,16 @@ function tokenizePosix(src) {
  * @returns {Array<object>}
  */
 function stripRedirections(tokens) {
-  const out = [];
+  const out = []
   for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
+    const token = tokens[i]
     if (token.op) {
-      if (i + 1 < tokens.length && !tokens[i + 1].op) i += 1;
-      continue;
+      if (i + 1 < tokens.length && !tokens[i + 1].op) i += 1
+      continue
     }
-    out.push(token);
+    out.push(token)
   }
-  return out;
+  return out
 }
 
 /**
@@ -441,63 +441,63 @@ function stripRedirections(tokens) {
  * @returns {string[]}
  */
 function splitPosixPipeline(src) {
-  const stages = [];
-  const n = src.length;
-  let start = 0;
-  let i = 0;
-  let quote = null;
+  const stages = []
+  const n = src.length
+  let start = 0
+  let i = 0
+  let quote = null
   while (i < n) {
-    const c = src[i];
+    const c = src[i]
     if (quote === "'") {
-      if (c === "'") quote = null;
-      i += 1;
-      continue;
+      if (c === "'") quote = null
+      i += 1
+      continue
     }
     if (quote === '"') {
       if (c === '\\') {
-        i += 2;
-        continue;
+        i += 2
+        continue
       }
-      if (c === '"') quote = null;
-      i += 1;
-      continue;
+      if (c === '"') quote = null
+      i += 1
+      continue
     }
     if (c === "'" || c === '"') {
-      quote = c;
-      i += 1;
-      continue;
+      quote = c
+      i += 1
+      continue
     }
     if (c === '\\') {
-      i += 2;
-      continue;
+      i += 2
+      continue
     }
     if (c === '`') {
-      const end = findBacktickEnd(src, i);
-      i = Math.min(end + 1, n);
-      continue;
+      const end = findBacktickEnd(src, i)
+      i = Math.min(end + 1, n)
+      continue
     }
     if (c === '$' && src[i + 1] === '(') {
-      const end = findParenClose(src, i + 1);
-      i = Math.min(end + 1, n);
-      continue;
+      const end = findParenClose(src, i + 1)
+      i = Math.min(end + 1, n)
+      continue
     }
     if (c === '|') {
       if (src[i + 1] === '|') {
         // `||` should not survive statement splitting; keep it as a boundary.
-        stages.push(src.slice(start, i));
-        i += 2;
-        start = i;
-        continue;
+        stages.push(src.slice(start, i))
+        i += 2
+        start = i
+        continue
       }
-      stages.push(src.slice(start, i));
-      i += 1;
-      start = i;
-      continue;
+      stages.push(src.slice(start, i))
+      i += 1
+      start = i
+      continue
     }
-    i += 1;
+    i += 1
   }
-  stages.push(src.slice(start));
-  return stages.map((stage) => stage.trim()).filter((stage) => stage.length > 0);
+  stages.push(src.slice(start))
+  return stages.map((stage) => stage.trim()).filter((stage) => stage.length > 0)
 }
 
 /**
@@ -507,54 +507,54 @@ function splitPosixPipeline(src) {
  * @returns {object} partial statement
  */
 function analyzeRm(args, text) {
-  let recursive = false;
-  let force = false;
-  let dryRun = false;
-  let endOfOptions = false;
-  const notes = [];
-  const risks = [];
-  const rawTargets = [];
+  let recursive = false
+  let force = false
+  let dryRun = false
+  let endOfOptions = false
+  const notes = []
+  const risks = []
+  const rawTargets = []
 
   for (const token of args) {
-    const value = token.value;
+    const value = token.value
     if (!endOfOptions && value === '--') {
-      endOfOptions = true;
-      continue;
+      endOfOptions = true
+      continue
     }
     if (!endOfOptions && value.startsWith('--')) {
-      risks.push('rm-long-options');
-      const name = value.slice(2).split('=')[0].toLowerCase();
-      if (name === 'recursive') recursive = true;
-      else if (name === 'force') force = true;
+      risks.push('rm-long-options')
+      const name = value.slice(2).split('=')[0].toLowerCase()
+      if (name === 'recursive') recursive = true
+      else if (name === 'force') force = true
       else if (name === 'dry-run') {
-        dryRun = true;
-        risks.push('dry-run');
+        dryRun = true
+        risks.push('dry-run')
       } else if (name === 'no-preserve-root') {
-        notes.push('使用 --no-preserve-root，允许把根目录作为删除目标');
+        notes.push('使用 --no-preserve-root，允许把根目录作为删除目标')
       } else if (name === 'verbose') {
         // no-op
       } else if (name === 'interactive') {
-        notes.push('--interactive 会改变确认行为，无法静态判定');
+        notes.push('--interactive 会改变确认行为，无法静态判定')
       } else if (name === 'one-file-system') {
-        notes.push('--one-file-system 限制删除跨文件系统');
+        notes.push('--one-file-system 限制删除跨文件系统')
       } else {
-        notes.push('未识别的 rm 长选项 --' + name);
+        notes.push('未识别的 rm 长选项 --' + name)
       }
-      continue;
+      continue
     }
     if (!endOfOptions && value.length > 1 && value[0] === '-') {
       for (const flag of value.slice(1)) {
-        if (flag === 'r' || flag === 'R') recursive = true;
-        else if (flag === 'f') force = true;
-        else if (flag === 'd') notes.push('-d 仅删除空目录');
-        else if (flag === 'i') notes.push('-i 为交互确认');
+        if (flag === 'r' || flag === 'R') recursive = true
+        else if (flag === 'f') force = true
+        else if (flag === 'd') notes.push('-d 仅删除空目录')
+        else if (flag === 'i') notes.push('-i 为交互确认')
         else if (flag === 'v') {
           // verbose, nothing to record
-        } else notes.push('未识别的 rm 选项 -' + flag);
+        } else notes.push('未识别的 rm 选项 -' + flag)
       }
-      continue;
+      continue
     }
-    rawTargets.push(targetFromToken(token));
+    rawTargets.push(targetFromToken(token))
   }
 
   if (!rawTargets.length) {
@@ -569,7 +569,7 @@ function analyzeRm(args, text) {
       unparsed: true,
       notes: notes.concat('rm 缺少可解析的删除目标'),
       risks: risks.concat('unknown-construct'),
-    });
+    })
   }
 
   return makePartial({
@@ -583,7 +583,7 @@ function analyzeRm(args, text) {
     notes,
     risks,
     rawTargets,
-  });
+  })
 }
 
 /**
@@ -596,34 +596,34 @@ function analyzeRm(args, text) {
  */
 function analyzeMove(args, text) {
   /** @type {object[]} */
-  const rawTargets = [];
-  const notes = [];
-  let dryRun = false;
-  let force = false;
-  let endOfOptions = false;
+  const rawTargets = []
+  const notes = []
+  let dryRun = false
+  let force = false
+  let endOfOptions = false
   for (const token of args) {
-    const value = unmask(token.value);
+    const value = unmask(token.value)
     if (!endOfOptions && value === '--') {
-      endOfOptions = true;
-      continue;
+      endOfOptions = true
+      continue
     }
     if (!endOfOptions && (value === '-n' || value === '--dry-run' || value === '-v' || value === '--verbose')) {
-      if (value === '-n' || value === '--dry-run') dryRun = true;
-      continue;
+      if (value === '-n' || value === '--dry-run') dryRun = true
+      continue
     }
     if (!endOfOptions && (value === '-f' || value === '--force')) {
-      force = true;
-      continue;
+      force = true
+      continue
     }
     if (!endOfOptions && (value === '-i' || value === '--interactive')) {
-      notes.push('mv -i 为交互确认');
-      continue;
+      notes.push('mv -i 为交互确认')
+      continue
     }
     if (!endOfOptions && value.length > 1 && value[0] === '-' && !value.includes('/') && !value.includes('\\')) {
-      notes.push('未识别的 mv 选项 ' + value);
-      continue;
+      notes.push('未识别的 mv 选项 ' + value)
+      continue
     }
-    rawTargets.push(targetFromToken(token));
+    rawTargets.push(targetFromToken(token))
   }
   if (rawTargets.length < 2) {
     return makePartial({
@@ -638,7 +638,7 @@ function analyzeMove(args, text) {
       notes: notes.concat('mv 缺少源/目标，无法确认移动范围'),
       risks: ['move', 'unknown-construct'],
       rawTargets,
-    });
+    })
   }
   return makePartial({
     text,
@@ -651,7 +651,7 @@ function analyzeMove(args, text) {
     notes: notes.concat('mv 会移动目标'),
     risks: ['move'],
     rawTargets,
-  });
+  })
 }
 
 /**
@@ -661,29 +661,29 @@ function analyzeMove(args, text) {
  * @returns {object}
  */
 function analyzeRmdir(args, text) {
-  let recursive = false;
-  let force = false;
-  let dryRun = false;
-  const notes = [];
-  const rawTargets = [];
+  let recursive = false
+  let force = false
+  let dryRun = false
+  const notes = []
+  const rawTargets = []
   for (const token of args) {
-    const value = token.value;
-    if (value === '--') continue;
+    const value = token.value
+    if (value === '--') continue
     if (value.startsWith('--')) {
-      const name = value.slice(2).split('=')[0].toLowerCase();
-      if (name === 'parents') recursive = true;
-      else if (name === 'ignore-fail-on-non-empty') notes.push('--ignore-fail-on-non-empty 忽略非空目录');
+      const name = value.slice(2).split('=')[0].toLowerCase()
+      if (name === 'parents') recursive = true
+      else if (name === 'ignore-fail-on-non-empty') notes.push('--ignore-fail-on-non-empty 忽略非空目录')
       else if (name === 'verbose') {
         // no-op
-      } else notes.push('未识别的 rmdir 长选项 --' + name);
-      continue;
+      } else notes.push('未识别的 rmdir 长选项 --' + name)
+      continue
     }
     if (value.length > 1 && value[0] === '-') {
-      if (value.includes('p')) recursive = true;
-      if (value.includes('f')) force = true;
-      continue;
+      if (value.includes('p')) recursive = true
+      if (value.includes('f')) force = true
+      continue
     }
-    rawTargets.push(targetFromToken(token));
+    rawTargets.push(targetFromToken(token))
   }
   if (!rawTargets.length) {
     return makePartial({
@@ -697,7 +697,7 @@ function analyzeRmdir(args, text) {
       unparsed: true,
       notes: notes.concat('rmdir 缺少可解析的删除目标'),
       risks: ['unknown-construct'],
-    });
+    })
   }
   return makePartial({
     text,
@@ -709,7 +709,7 @@ function analyzeRmdir(args, text) {
     deleteKind: 'rmdir',
     notes,
     rawTargets,
-  });
+  })
 }
 
 /**
@@ -719,11 +719,11 @@ function analyzeRmdir(args, text) {
  * @returns {object}
  */
 function analyzeUnlink(args, text) {
-  const rawTargets = [];
-  const notes = [];
+  const rawTargets = []
+  const notes = []
   for (const token of args) {
-    if (token.value.startsWith('-')) continue;
-    rawTargets.push(targetFromToken(token));
+    if (token.value.startsWith('-')) continue
+    rawTargets.push(targetFromToken(token))
   }
   if (!rawTargets.length) {
     return makePartial({
@@ -734,9 +734,9 @@ function analyzeUnlink(args, text) {
       unparsed: true,
       notes: ['unlink 缺少可解析的目标'],
       risks: ['unknown-construct'],
-    });
+    })
   }
-  if (rawTargets.length > 1) notes.push('unlink 只接受一个目标，多余参数会被忽略');
+  if (rawTargets.length > 1) notes.push('unlink 只接受一个目标，多余参数会被忽略')
   return makePartial({
     text,
     command: 'unlink',
@@ -745,7 +745,7 @@ function analyzeUnlink(args, text) {
     notes,
     risks: ['unlink'],
     rawTargets,
-  });
+  })
 }
 
 /**
@@ -755,31 +755,31 @@ function analyzeUnlink(args, text) {
  * @returns {object}
  */
 function analyzeShred(args, text) {
-  let force = false;
-  let unlink = false;
-  const notes = [];
-  const rawTargets = [];
+  let force = false
+  let unlink = false
+  const notes = []
+  const rawTargets = []
   for (let i = 0; i < args.length; i += 1) {
-    const token = args[i];
-    const value = token.value;
-    if (value === '--') continue;
+    const token = args[i]
+    const value = token.value
+    if (value === '--') continue
     if (value.startsWith('--')) {
-      const name = value.slice(2).split('=')[0].toLowerCase();
-      if (name === 'remove') unlink = true;
-      else if (name === 'force') force = true;
+      const name = value.slice(2).split('=')[0].toLowerCase()
+      if (name === 'remove') unlink = true
+      else if (name === 'force') force = true
       else if (name === 'verbose' || name === 'zero' || name === 'exact') {
         // no-op
-      } else notes.push('未识别的 shred 长选项 --' + name);
-      continue;
+      } else notes.push('未识别的 shred 长选项 --' + name)
+      continue
     }
     if (value.length > 1 && value[0] === '-') {
-      if (value.includes('u')) unlink = true;
-      if (value.includes('f')) force = true;
+      if (value.includes('u')) unlink = true
+      if (value.includes('f')) force = true
       // Options -n / -s take a value.
-      if (value.includes('n') || value.includes('s')) i += 1;
-      continue;
+      if (value.includes('n') || value.includes('s')) i += 1
+      continue
     }
-    rawTargets.push(targetFromToken(token));
+    rawTargets.push(targetFromToken(token))
   }
   if (!rawTargets.length) {
     return makePartial({
@@ -791,9 +791,9 @@ function analyzeShred(args, text) {
       unparsed: true,
       notes: ['shred 缺少可解析的目标'],
       risks: ['unknown-construct'],
-    });
+    })
   }
-  notes.push(unlink ? 'shred -u 覆写后删除文件' : 'shred 覆写文件内容（内容不可恢复）');
+  notes.push(unlink ? 'shred -u 覆写后删除文件' : 'shred 覆写文件内容（内容不可恢复）')
   return makePartial({
     text,
     command: 'shred',
@@ -802,7 +802,7 @@ function analyzeShred(args, text) {
     deleteKind: 'other',
     notes,
     rawTargets,
-  });
+  })
 }
 
 /** Find predicates that take one value argument (for skipping). */
@@ -838,7 +838,7 @@ const FIND_VALUE_PREDICATES = new Set([
   '-fstype',
   '-uid',
   '-gid',
-]);
+])
 
 /**
  * Parse a `find` command; returns a delete partial only when `-delete` or a
@@ -850,87 +850,87 @@ const FIND_VALUE_PREDICATES = new Set([
  * @returns {object|null}
  */
 function analyzeFind(args, text, depth) {
-  let i = 0;
-  const roots = [];
-  const notes = [];
-  const risks = [];
-  let hasDelete = false;
-  let execShell = false;
-  let force = false;
-  let wildcard = false;
-  let unparsed = false;
+  let i = 0
+  const roots = []
+  const notes = []
+  const risks = []
+  let hasDelete = false
+  let execShell = false
+  let force = false
+  let wildcard = false
+  let unparsed = false
 
   // Skip find's own leading options (-L, -H, -P, -O..., -D).
   while (i < args.length) {
-    const value = args[i].value;
+    const value = args[i].value
     if (value === '-L' || value === '-H' || value === '-P') {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
     if (value === '-D' || value === '-O') {
-      i += 2;
-      continue;
+      i += 2
+      continue
     }
     if (/^-O\d/.test(value)) {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
-    break;
+    break
   }
   while (i < args.length) {
-    const value = args[i].value;
-    if (value.startsWith('-') || value === '(' || value === '!' || value === ')') break;
-    roots.push(args[i]);
-    i += 1;
+    const value = args[i].value
+    if (value.startsWith('-') || value === '(' || value === '!' || value === ')') break
+    roots.push(args[i])
+    i += 1
   }
-  if (!roots.length) roots.push(dotToken());
+  if (!roots.length) roots.push(dotToken())
 
   for (; i < args.length; i += 1) {
-    const value = args[i].value;
+    const value = args[i].value
     if (value === '-delete') {
-      hasDelete = true;
-      continue;
+      hasDelete = true
+      continue
     }
     if (value === '-exec' || value === '-execdir' || value === '-ok' || value === '-okdir') {
-      const inner = [];
-      i += 1;
+      const inner = []
+      i += 1
       while (i < args.length && args[i].value !== ';' && args[i].value !== '+' && args[i].value !== '\\;') {
-        inner.push(args[i]);
-        i += 1;
+        inner.push(args[i])
+        i += 1
       }
-      if (inner.length === 0) continue;
-      const innerCommand = baseName(inner[0].value);
-      const innerPartial = dispatchDeleteCommand(innerCommand, inner.slice(1), text, (depth || 0) + 1);
+      if (inner.length === 0) continue
+      const innerCommand = baseName(inner[0].value)
+      const innerPartial = dispatchDeleteCommand(innerCommand, inner.slice(1), text, (depth || 0) + 1)
       if (innerPartial && innerPartial.isDelete) {
-        hasDelete = true;
-        force = force || Boolean(innerPartial.force);
+        hasDelete = true
+        force = force || Boolean(innerPartial.force)
         // Do not inherit the inner command's target-related `unparsed` state:
         // `{}` is the find placeholder, the real targets are the find roots.
-        notes.push('find -exec 调用 ' + innerCommand + ' 删除匹配项');
+        notes.push('find -exec 调用 ' + innerCommand + ' 删除匹配项')
       } else if (['sh', 'bash', 'zsh', 'dash', 'ksh', 'pwsh', 'powershell', 'cmd'].includes(innerCommand)) {
-        hasDelete = true;
-        execShell = true;
-        unparsed = true;
-        risks.push('unknown-construct');
-        notes.push('find -exec 通过 ' + innerCommand + ' 执行脚本，无法静态解析删除范围');
+        hasDelete = true
+        execShell = true
+        unparsed = true
+        risks.push('unknown-construct')
+        notes.push('find -exec 通过 ' + innerCommand + ' 执行脚本，无法静态解析删除范围')
       }
-      continue;
+      continue
     }
     if (value === '-name' || value === '-iname' || value === '-path' || value === '-ipath' || value === '-wholename' || value === '-iwholename' || value === '-regex' || value === '-iregex') {
-      const pattern = args[i + 1];
-      if (pattern && /[*?[\]{]/.test(pattern.value)) wildcard = true;
-      i += 1;
-      continue;
+      const pattern = args[i + 1]
+      if (pattern && /[*?[\]{]/.test(pattern.value)) wildcard = true
+      i += 1
+      continue
     }
     if (FIND_VALUE_PREDICATES.has(value)) {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
   }
 
-  if (!hasDelete) return null;
-  if (execShell) unparsed = true;
-  notes.push('-delete 会递归删除所有匹配项');
+  if (!hasDelete) return null
+  if (execShell) unparsed = true
+  notes.push('-delete 会递归删除所有匹配项')
   return makePartial({
     text,
     command: 'find',
@@ -943,7 +943,7 @@ function analyzeFind(args, text, depth) {
     notes,
     risks: risks.concat('find-delete'),
     rawTargets: roots.map((token) => targetFromToken(token)),
-  });
+  })
 }
 
 /**
@@ -953,60 +953,60 @@ function analyzeFind(args, text, depth) {
  * @returns {object|null}
  */
 function analyzeGitClean(args, text) {
-  let cleanIndex = -1;
+  let cleanIndex = -1
   for (let i = 0; i < args.length; i += 1) {
-    const value = args[i].value;
+    const value = args[i].value
     if (value === 'clean') {
-      cleanIndex = i;
-      break;
+      cleanIndex = i
+      break
     }
     if (value === 'status' || value === 'commit' || value === 'log' || value === 'diff' || value === 'push' || value === 'checkout' || value === 'reset') {
-      return null;
+      return null
     }
   }
-  if (cleanIndex < 0) return null;
+  if (cleanIndex < 0) return null
 
-  let force = false;
-  let dryRun = false;
-  let dirs = false;
-  let ignored = false;
-  let interactive = false;
-  const notes = [];
-  const risks = [];
-  const rawTargets = [];
+  let force = false
+  let dryRun = false
+  let dirs = false
+  let ignored = false
+  let interactive = false
+  const notes = []
+  const risks = []
+  const rawTargets = []
 
   for (let i = cleanIndex + 1; i < args.length; i += 1) {
-    const token = args[i];
-    const value = token.value;
-    if (value === '--') continue;
+    const token = args[i]
+    const value = token.value
+    if (value === '--') continue
     if (value.startsWith('--')) {
-      const name = value.slice(2).split('=')[0].toLowerCase();
-      if (name === 'force') force = true;
-      else if (name === 'dry-run') dryRun = true;
-      else if (name === 'interactive') interactive = true;
+      const name = value.slice(2).split('=')[0].toLowerCase()
+      if (name === 'force') force = true
+      else if (name === 'dry-run') dryRun = true
+      else if (name === 'interactive') interactive = true
       else if (name === 'quiet') {
         // no-op
-      } else notes.push('未识别的 git clean 长选项 --' + name);
-      continue;
+      } else notes.push('未识别的 git clean 长选项 --' + name)
+      continue
     }
     if (value.length > 1 && value[0] === '-') {
       for (const flag of value.slice(1)) {
-        if (flag === 'f') force = true;
-        else if (flag === 'n') dryRun = true;
-        else if (flag === 'd') dirs = true;
-        else if (flag === 'x' || flag === 'X') ignored = true;
-        else if (flag === 'i') interactive = true;
+        if (flag === 'f') force = true
+        else if (flag === 'n') dryRun = true
+        else if (flag === 'd') dirs = true
+        else if (flag === 'x' || flag === 'X') ignored = true
+        else if (flag === 'i') interactive = true
         else if (flag === 'q') {
           // quiet
         }
       }
-      continue;
+      continue
     }
-    rawTargets.push(targetFromToken(token));
+    rawTargets.push(targetFromToken(token))
   }
-  if (!rawTargets.length) rawTargets.push(targetFromToken(dotToken(), { note: 'git clean 默认作用于当前工作区' }));
-  if (dirs) notes.push('git clean -d 会递归删除未跟踪目录');
-  if (ignored) notes.push('git clean -x 会连同 .gitignore 中忽略的文件一起删除');
+  if (!rawTargets.length) rawTargets.push(targetFromToken(dotToken(), { note: 'git clean 默认作用于当前工作区' }))
+  if (dirs) notes.push('git clean -d 会递归删除未跟踪目录')
+  if (ignored) notes.push('git clean -x 会连同 .gitignore 中忽略的文件一起删除')
   if (!force && !dryRun && !interactive) {
     return makePartial({
       text,
@@ -1014,11 +1014,11 @@ function analyzeGitClean(args, text) {
       isDelete: false,
       deleteKind: 'none',
       notes: notes.concat('git clean 未带 -f/-n/-i，git 会拒绝执行'),
-    });
+    })
   }
   if (interactive) {
-    risks.push('unknown-construct');
-    notes.push('git clean -i 为交互式删除，实际范围取决于交互输入');
+    risks.push('unknown-construct')
+    notes.push('git clean -i 为交互式删除，实际范围取决于交互输入')
   }
   return makePartial({
     text,
@@ -1032,7 +1032,7 @@ function analyzeGitClean(args, text) {
     notes,
     risks,
     rawTargets,
-  });
+  })
 }
 
 /**
@@ -1042,37 +1042,37 @@ function analyzeGitClean(args, text) {
  * @returns {object|null}
  */
 function analyzeRsync(args, text) {
-  let hasDelete = false;
-  let dryRun = false;
-  let recursive = false;
-  const notes = [];
-  const risks = [];
-  const positional = [];
+  let hasDelete = false
+  let dryRun = false
+  let recursive = false
+  const notes = []
+  const risks = []
+  const positional = []
   for (const token of args) {
-    const value = token.value;
+    const value = token.value
     if (value === '--delete' || value.startsWith('--delete-') || value === '--del') {
-      hasDelete = true;
-      continue;
+      hasDelete = true
+      continue
     }
     if (value === '--dry-run') {
-      dryRun = true;
-      continue;
+      dryRun = true
+      continue
     }
     if (value === '--recursive') {
-      recursive = true;
-      continue;
+      recursive = true
+      continue
     }
-    if (value.length > 1 && value[0] === '-' && value[1] === '-') continue;
+    if (value.length > 1 && value[0] === '-' && value[1] === '-') continue
     if (value.length > 1 && value[0] === '-') {
-      if (value.slice(1).includes('r') || value.slice(1).includes('a')) recursive = true;
-      continue;
+      if (value.slice(1).includes('r') || value.slice(1).includes('a')) recursive = true
+      continue
     }
-    positional.push(token);
+    positional.push(token)
   }
-  if (!hasDelete) return null;
-  const dest = positional.length ? positional[positional.length - 1] : null;
-  notes.push('rsync --delete 会删除目标目录中源端不存在的文件');
-  risks.push('mirror-delete');
+  if (!hasDelete) return null
+  const dest = positional.length ? positional[positional.length - 1] : null
+  notes.push('rsync --delete 会删除目标目录中源端不存在的文件')
+  risks.push('mirror-delete')
   if (!dest) {
     return makePartial({
       text,
@@ -1084,7 +1084,7 @@ function analyzeRsync(args, text) {
       unparsed: true,
       notes: notes.concat('未找到 rsync 目标目录'),
       risks: risks.concat('unknown-construct'),
-    });
+    })
   }
   return makePartial({
     text,
@@ -1096,7 +1096,7 @@ function analyzeRsync(args, text) {
     notes,
     risks,
     rawTargets: [targetFromToken(dest, { note: 'rsync 目标目录' })],
-  });
+  })
 }
 
 /**
@@ -1107,38 +1107,38 @@ function analyzeRsync(args, text) {
  * @returns {object|null}
  */
 function analyzeXargs(args, text, depth) {
-  if ((depth || 0) > 3) return null;
-  let i = 0;
-  let placeholder = null;
+  if ((depth || 0) > 3) return null
+  let i = 0
+  let placeholder = null
   while (i < args.length) {
-    const value = args[i].value;
+    const value = args[i].value
     if (value === '--') {
-      i += 1;
-      break;
+      i += 1
+      break
     }
     if (value === '-I') {
-      placeholder = args[i + 1] ? unmask(args[i + 1].value) : null;
-      i += 2;
-      continue;
+      placeholder = args[i + 1] ? unmask(args[i + 1].value) : null
+      i += 2
+      continue
     }
     if (value.startsWith('-I') && value.length > 2) {
-      placeholder = unmask(value.slice(2));
-      i += 1;
-      continue;
+      placeholder = unmask(value.slice(2))
+      i += 1
+      continue
     }
     if (value === '-n' || value === '-P' || value === '-L' || value === '-d' || value === '-s' || value === '-a' || value === '-E' || value === '-e') {
-      i += 2;
-      continue;
+      i += 2
+      continue
     }
     if (value.startsWith('-')) {
-      i += 1;
-      continue;
+      i += 1
+      continue
     }
-    break;
+    break
   }
-  if (i >= args.length) return null;
-  const innerCommand = baseName(args[i].value);
-  const innerArgs = args.slice(i + 1);
+  if (i >= args.length) return null
+  const innerCommand = baseName(args[i].value)
+  const innerArgs = args.slice(i + 1)
   if (['sh', 'bash', 'zsh', 'dash', 'ksh', 'pwsh', 'powershell', 'cmd'].includes(innerCommand)) {
     return makePartial({
       text,
@@ -1148,25 +1148,25 @@ function analyzeXargs(args, text, depth) {
       unparsed: true,
       notes: ['xargs 通过 ' + innerCommand + ' 执行内联脚本，无法静态解析删除范围'],
       risks: ['unknown-construct'],
-    });
+    })
   }
-  const inner = dispatchDeleteCommand(innerCommand, innerArgs, text, (depth || 0) + 1);
-  if (!inner || !inner.isDelete) return null;
+  const inner = dispatchDeleteCommand(innerCommand, innerArgs, text, (depth || 0) + 1)
+  if (!inner || !inner.isDelete) return null
 
-  const innerHadTargets = Array.isArray(inner.rawTargets) && inner.rawTargets.length > 0;
+  const innerHadTargets = Array.isArray(inner.rawTargets) && inner.rawTargets.length > 0
   const notes = (inner.notes || [])
     .filter((note) => !(innerHadTargets || !String(note).includes('缺少可解析的删除目标')))
-    .concat('经 xargs 调用 ' + innerCommand + ' 批量删除');
-  const rawTargets = [];
+    .concat('经 xargs 调用 ' + innerCommand + ' 批量删除')
+  const rawTargets = []
   for (const target of inner.rawTargets || []) {
     const isPlaceholder =
       target.raw === '' ||
       target.raw === '{}' ||
-      (placeholder !== null && target.raw === placeholder);
-    if (isPlaceholder) continue;
-    rawTargets.push(Object.assign({}, target, { viaPipeline: true }));
+      (placeholder !== null && target.raw === placeholder)
+    if (isPlaceholder) continue
+    rawTargets.push(Object.assign({}, target, { viaPipeline: true }))
   }
-  const inheritedRisks = (inner.risks || []).filter((risk) => innerHadTargets || risk !== 'unknown-construct');
+  const inheritedRisks = (inner.risks || []).filter((risk) => innerHadTargets || risk !== 'unknown-construct')
   const partial = makePartial({
     text,
     command: 'xargs',
@@ -1182,9 +1182,9 @@ function analyzeXargs(args, text, depth) {
     notes,
     risks: inheritedRisks.concat('pipeline-generic'),
     rawTargets,
-  });
-  partial.needsPipelineInput = true;
-  return partial;
+  })
+  partial.needsPipelineInput = true
+  return partial
 }
 
 /**
@@ -1196,28 +1196,28 @@ function analyzeXargs(args, text, depth) {
  * @returns {object|null}
  */
 function dispatchDeleteCommand(command, args, text, depth) {
-  if (!DELETE_COMMANDS.has(command)) return null;
+  if (!DELETE_COMMANDS.has(command)) return null
   switch (command) {
     case 'rm':
-      return analyzeRm(args, text);
+      return analyzeRm(args, text)
     case 'rmdir':
-      return analyzeRmdir(args, text);
+      return analyzeRmdir(args, text)
     case 'unlink':
-      return analyzeUnlink(args, text);
+      return analyzeUnlink(args, text)
     case 'shred':
-      return analyzeShred(args, text);
+      return analyzeShred(args, text)
     case 'find':
-      return analyzeFind(args, text, depth || 0);
+      return analyzeFind(args, text, depth || 0)
     case 'xargs':
-      return analyzeXargs(args, text, depth || 0);
+      return analyzeXargs(args, text, depth || 0)
     case 'git':
-      return analyzeGitClean(args, text);
+      return analyzeGitClean(args, text)
     case 'rsync':
-      return analyzeRsync(args, text);
+      return analyzeRsync(args, text)
     case 'mv':
-      return analyzeMove(args, text);
+      return analyzeMove(args, text)
     default:
-      return null;
+      return null
   }
 }
 
@@ -1228,42 +1228,42 @@ function dispatchDeleteCommand(command, args, text, depth) {
  * @returns {{roots: Array<object>, recursive: boolean, wildcard: boolean}|null}
  */
 function producerInfo(command, args) {
-  if (!PRODUCER_COMMANDS.has(command)) return null;
-  const roots = [];
-  let wildcard = false;
+  if (!PRODUCER_COMMANDS.has(command)) return null
+  const roots = []
+  let wildcard = false
   if (command === 'find') {
-    let i = 0;
+    let i = 0
     while (i < args.length) {
-      const value = args[i].value;
+      const value = args[i].value
       if (value === '-L' || value === '-H' || value === '-P') {
-        i += 1;
-        continue;
+        i += 1
+        continue
       }
-      if (value.startsWith('-') || value === '(' || value === '!' || value === ')') break;
-      roots.push(args[i]);
-      i += 1;
+      if (value.startsWith('-') || value === '(' || value === '!' || value === ')') break
+      roots.push(args[i])
+      i += 1
     }
     for (; i < args.length; i += 1) {
-      const value = args[i].value;
+      const value = args[i].value
       if ((value === '-name' || value === '-iname' || value === '-path') && args[i + 1] && /[*?[\]{]/.test(args[i + 1].value)) {
-        wildcard = true;
+        wildcard = true
       }
     }
   } else if (command === 'printf') {
-    const positional = args.filter((token) => !token.value.startsWith('-'));
-    positional.slice(1).forEach((token) => roots.push(token));
+    const positional = args.filter((token) => !token.value.startsWith('-'))
+    positional.slice(1).forEach((token) => roots.push(token))
   } else {
     for (const token of args) {
-      if (token.value.startsWith('-') && token.value !== '-') continue;
-      roots.push(token);
+      if (token.value.startsWith('-') && token.value !== '-') continue
+      roots.push(token)
     }
   }
-  if (!roots.length) roots.push(dotToken());
+  if (!roots.length) roots.push(dotToken())
   return {
     roots: roots.map((token) => targetFromToken(token)),
     recursive: command === 'find',
     wildcard,
-  };
+  }
 }
 
 /**
@@ -1273,18 +1273,18 @@ function producerInfo(command, args) {
  * @returns {Array<object>}
  */
 function collectTruncateRedirects(tokens) {
-  const targets = [];
+  const targets = []
   for (let i = 0; i < tokens.length; i += 1) {
-    const token = tokens[i];
-    if (!token.op || !/^[0-9]?>$/.test(token.value)) continue;
-    const next = tokens[i + 1];
-    if (!next || next.op) continue;
-    const value = String(next.value ?? '').trim();
+    const token = tokens[i]
+    if (!token.op || !/^[0-9]?>$/.test(token.value)) continue
+    const next = tokens[i + 1]
+    if (!next || next.op) continue
+    const value = String(next.value ?? '').trim()
     // `$null` / `NUL` are void sinks, same as `/dev/null`; never treat them as files.
-    if (value === '' || /^\$?(?:null|nul)$/i.test(value) || /^\/dev\/(?:null|stdout|stderr)$/.test(value)) continue;
-    targets.push(next);
+    if (value === '' || /^\$?(?:null|nul)$/i.test(value) || /^\/dev\/(?:null|stdout|stderr)$/.test(value)) continue
+    targets.push(next)
   }
-  return targets;
+  return targets
 }
 
 /** Commands whose own delete handling must win over redirect truncation. */
@@ -1297,36 +1297,36 @@ const POSIX_DELETE_WORDS = new Set(['rm', 'unlink', 'rmdir', 'rd', 'find', 'shre
  * @returns {{partial: object, producer: object|null}}
  */
 function parseStage(stageText, depth) {
-  const rawTokens = tokenizePosix(stageText);
-  const redirTargets = collectTruncateRedirects(rawTokens);
-  const tokens = stripRedirections(rawTokens);
-  let index = 0;
+  const rawTokens = tokenizePosix(stageText)
+  const redirTargets = collectTruncateRedirects(rawTokens)
+  const tokens = stripRedirections(rawTokens)
+  let index = 0
   while (index < tokens.length) {
-    const value = tokens[index].value;
+    const value = tokens[index].value
     if (!value) {
-      index += 1;
-      continue;
+      index += 1
+      continue
     }
     if (SKIP_WORDS.has(value)) {
-      index += 1;
-      continue;
+      index += 1
+      continue
     }
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-      index += 1;
-      continue;
+      index += 1
+      continue
     }
-    break;
+    break
   }
-  if (index >= tokens.length) return { partial: null, producer: null };
+  if (index >= tokens.length) return { partial: null, producer: null }
 
-  let command = baseName(tokens[index].value);
-  let argStart = index + 1;
+  let command = baseName(tokens[index].value)
+  let argStart = index + 1
   if (command === 'busybox' && tokens[index + 1]) {
-    command = baseName(tokens[index + 1].value);
-    argStart = index + 2;
+    command = baseName(tokens[index + 1].value)
+    argStart = index + 2
   }
-  const args = tokens.slice(argStart);
-  const producer = producerInfo(command, args);
+  const args = tokens.slice(argStart)
+  const producer = producerInfo(command, args)
 
   // `command > file` truncates `file`; `>>` only appends, `/dev/null` is not a file.
   if (redirTargets.length > 0 && !POSIX_DELETE_WORDS.has(command)) {
@@ -1340,7 +1340,7 @@ function parseStage(stageText, depth) {
         rawTargets: redirTargets.map(token => targetFromToken(token)),
       }),
       producer: null,
-    };
+    }
   }
 
   if (COMPOUND_WORDS.has(command)) {
@@ -1351,15 +1351,15 @@ function parseStage(stageText, depth) {
         notes: ['复合语句片段，未在其中直接发现删除命令'],
       }),
       producer: null,
-    };
+    }
   }
 
-  const partial = dispatchDeleteCommand(command, args, stageText.trim(), depth || 0);
-  if (partial) return { partial, producer: partial.isDelete ? null : producer };
+  const partial = dispatchDeleteCommand(command, args, stageText.trim(), depth || 0)
+  if (partial) return { partial, producer: partial.isDelete ? null : producer }
   return {
     partial: makePartial({ text: stageText.trim(), command }),
     producer,
-  };
+  }
 }
 
 /**
@@ -1370,14 +1370,14 @@ function parseStage(stageText, depth) {
  * @returns {object[]} partial statements
  */
 export function parsePosixStatements(chunkText, depth) {
-  const stages = splitPosixPipeline(String(chunkText || ''));
-  const out = [];
-  let upstream = null;
+  const stages = splitPosixPipeline(String(chunkText || ''))
+  const out = []
+  let upstream = null
 
   for (const stageText of stages) {
-    let parsed;
+    let parsed
     try {
-      parsed = parseStage(stageText, depth || 0);
+      parsed = parseStage(stageText, depth || 0)
     } catch {
       out.push(
         makePartial({
@@ -1387,19 +1387,19 @@ export function parsePosixStatements(chunkText, depth) {
           risks: ['unknown-construct'],
           notes: ['POSIX 解析异常，已降级为不可解析语句'],
         }),
-      );
-      continue;
+      )
+      continue
     }
-    if (!parsed.partial) continue;
-    const partial = parsed.partial;
+    if (!parsed.partial) continue
+    const partial = parsed.partial
 
     if (partial.isDelete && partial.needsPipelineInput) {
-      const derived = upstream && upstream.roots && upstream.roots.length ? upstream.roots : [];
+      const derived = upstream && upstream.roots && upstream.roots.length ? upstream.roots : []
       if (derived.length) {
         partial.rawTargets = partial.rawTargets.concat(
           derived.map((target) => Object.assign({}, target, { viaPipeline: true, note: '目标来自管道上游' })),
-        );
-        if (upstream.wildcard) partial.wildcard = true;
+        )
+        if (upstream.wildcard) partial.wildcard = true
       } else {
         partial.rawTargets = partial.rawTargets.concat([
           {
@@ -1411,17 +1411,17 @@ export function parsePosixStatements(chunkText, depth) {
             synthetic: true,
             scopeOverride: 'unknown',
           },
-        ]);
-        partial.unparsed = true;
-        partial.risks.push('unknown-construct');
+        ])
+        partial.unparsed = true
+        partial.risks.push('unknown-construct')
       }
-      if (!partial.risks.includes('pipeline-generic')) partial.risks.push('pipeline-generic');
-      partial.notes.push('删除目标由管道上游提供，无法静态确定具体文件');
+      if (!partial.risks.includes('pipeline-generic')) partial.risks.push('pipeline-generic')
+      partial.notes.push('删除目标由管道上游提供，无法静态确定具体文件')
     }
 
-    out.push(partial);
-    if (parsed.producer) upstream = parsed.producer;
+    out.push(partial)
+    if (parsed.producer) upstream = parsed.producer
   }
 
-  return out;
+  return out
 }

@@ -1,0 +1,9 @@
+{
+  "name": "dsh-vigil-fixture-sup-18",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "engines": {
+    "node": "<=16"
+  }
+}

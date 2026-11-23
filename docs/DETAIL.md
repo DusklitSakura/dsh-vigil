@@ -24,7 +24,7 @@ DSH VIGIL 为 DeepSeek Harness 增加安装审计、运行时危险操作评估�
 
 | 能力 | 说明 |
 | --- | --- |
-| **安装前静态审计** | `vigil_scan` 检查 `package.json`、`cordis.patch.yml` 与源码，识别凭证访问、外发、动态执行、配置篡改、供应链及 DSH 特有风险。报告提供 finding 等级、文件 / 行号证据、风险解释与缓解建议。扫描只读，不执行被审计代码；Acorn AST 别名分析为可选增强。 |
+| **安装前静态审计** | `vigil_scan` 检查 `package.json`、`cordis.patch.yml` 与源码，识别凭证访问、外发、动态执行、配置篡改、供应链及 DSH 特有风险。报告提供 finding 等级、文件 / 行号证据、风险解释与缓解建议。扫描只读，不执行被审计代码；Acorn AST 别名分析为可选增强。本地路径安装的预检同时覆盖 agent 的工具安装与插件页面的 GUI 安装。 |
 | **运行时哨兵** | 在 `tools/pre-execute` 中评估凭证读取与外发、可疑主机、动态远程代码、编码命令、配置篡改、持久化写入、插件安装等行为，并给出 allow / ask / deny 决策。 |
 | **删除防护与隔离区** | 解析 PowerShell、POSIX 等删除意图，按保护根等级和规模估算评估风险。符合条件的明确目标可在被拒绝后移入本地隔离区，并通过 `vigil_quarantine` 恢复。 |
 | **自保护** | guard 检查对插件自身目录与状态目录的删除、移动、写入、编辑，以及通过工具卸载 / 替换自身的操作。 |
@@ -32,11 +32,16 @@ DSH VIGIL 为 DeepSeek Harness 增加安装审计、运行时危险操作评估�
 | **不可逆破坏防护** | 格盘、分区、引导、注册表、卷影副本、事件日志、安全设置等系统破坏默认拒绝；数据库、容器、云资源、Git 历史等大规模数据破坏默认询问。规则可配置。 |
 | **审计与完整性** | 记录关键决策，提供哈希链校验及 JSON / CSV 导出；文件基线、金丝雀、钩子心跳与可选 Ed25519 签名用于发现状态变化。 |
 | **可选 Sage 引擎** | 可从设置页自动安装 / 更新 Sage 语义规则引擎。未启用时，内置规则仍可独立工作。 |
+| **能力清单与升级 diff** | 报告汇总 `capabilities`（network / exec / credentials / fs-write / install-hooks / patch / client-ui / instructions）；插件可声明 `dsh.capabilities`，升级时新增能力会触发 `VG-SUP-16` 询问，旧版本能力基线记录在状态目录。 |
+| **已知漏洞与官方包信任** | 可选 `scan.osv.enabled` 在安装前查询 OSV（含 lockfile 依赖）；`trust.officialPackages` / `trust.pins` 按内容哈希信任官方包，漂移时询问（`VG-SUP-17`）。 |
+| **运行时进程内守卫与台账** | 可选 `sentinel.runtimeGuard`：拦截插件直接删除 / 覆盖凭证或系统路径与下载即执行（`VG-RT-16` / `VG-RT-17`）；台账按 10 秒窗口识别批量删除、改名加密、写放大、读后覆盖（`VG-RT-18`）。默认关闭，盲区见 [limitations.md](limitations.md) 第 35–40 条。 |
+| **蜜罐 canary** | 可选 `sentinel.canary`：在状态目录埋入带随机令牌的凭据诱饵，出站请求（fetch / http / https）携带该令牌时阻止并确认（`VG-RT-19`）。 |
+| **覆盖度状态** | 报告 `coverage` 字段标注每个风险面的 `covered / partial / absent / unsupported`；不完整时产出 `VG-SCAN-06`，卡片显示“覆盖度不足”。 |
 
 ## 安装与使用
 
 1. 在 **Plugins → Add plugin** 中添加 `dsh-vigil@<版本>`（npm），或固定提交 `github:DusklitSakura/dsh-vigil#<40 位 commit SHA>`。两种方式都会由插件管理器完成安装与后续更新。
-2. 打开 **Settings → 守夜人**，检查运行模式、规则决策、删除阈值、隔离区、审计与可选 Sage 设置。
+2. 打开 **Settings → 守夜人**，检查运行模式、规则决策、删除阈值、隔离区、审计与可选 Sage 设置；需要时再打开 OSV 已知漏洞查询、官方包信任、进程内运行时守卫或蜜罐 canary（均默认关闭）。
 3. 在会话工具列表中使用 `vigil_scan`、`vigil_status`、`vigil_doctor`、`vigil_audit`、`vigil_quarantine`、`vigil_rules`、`vigil_integrity` 与 `vigil_sage`。
 
 常用工具说明见 [tools.md](tools.md)，完整安装步骤见 [install.md](install.md)。

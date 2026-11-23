@@ -1,0 +1,4 @@
+# Fixture: an insert row without id/name cannot be reliably attributed.
+- insert:
+    - config:
+        greeting: hello

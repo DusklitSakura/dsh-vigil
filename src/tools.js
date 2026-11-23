@@ -25,7 +25,7 @@ import { statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { scanPluginDirectory, formatReportCard } from './audit/scan.js'
 import { describePackDir, getRulePack, pinRulePack, readRuleLock, reloadRulePack, verifyRulePack } from './rules/pack.js'
-import { formatBytes, nowIso, resolvePath, truncate } from './util.js'
+import { DEFAULT_APPROVAL_TIMEOUT_MS, formatBytes, nowIso, resolvePath, truncate } from './util.js'
 
 /** Shared JSON-schema fragment: an open object result. */
 const OPEN_OBJECT = { type: 'object', properties: {}, additionalProperties: true }
@@ -229,7 +229,7 @@ export function registerTools(ctx, deps) {
 
       const approval = deps.getApproval?.()
       const pending = typeof approval?.size === 'number' ? approval.size : 0
-      push('对话内审批', current.config.notify.inlineApproval !== false, `超时 ${Math.round((Number(current.config.notify.approvalTimeoutMs) || 120000) / 1000)}s · 待确认 ${pending}`)
+      push('对话内审批', current.config.notify.inlineApproval !== false, `超时 ${Math.round((Number(current.config.notify.approvalTimeoutMs) || DEFAULT_APPROVAL_TIMEOUT_MS) / 1000)}s · 待确认 ${pending}`)
 
       const routes = deps.getRoutes?.() ?? {}
       const routeNames = Object.keys(routes)

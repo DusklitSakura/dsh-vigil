@@ -1,0 +1,8 @@
+{
+  "name": "dsh-vigil-fixture-sup-02",
+  "version": "1.0.0",
+  "main": "./src/index.js",
+  "scripts": {
+    "postinstall": "node ./tools/link.js"
+  }
+}

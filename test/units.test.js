@@ -998,6 +998,31 @@ test('config schema: every form field is a volatile leaf and defaults agree', { 
 })
 
 
+test('approval queue: a code preview rides along and is bounded', async () => {
+  const queue = createApprovalQueue({ getTimeoutMs: () => 60000 })
+  const withCode = queue.request({
+    tool: 'plugin_manager',
+    reason: '该插件有 1 个高危命中',
+    ruleIds: ['VG-AUDIT-01'],
+    code: { language: 'JSON', text: '  "patch": "../outside-patch.yml"\n' },
+  })
+  const [entry] = queue.list()
+  assert.deepEqual(entry.code, { language: 'json', text: '  "patch": "../outside-patch.yml"\n' })
+
+  const blank = queue.request({ tool: 'plugin_manager', code: { text: '   ' } })
+  assert.equal(queue.list()[1].code, null, 'a blank preview is not sent to the page')
+
+  const huge = 'x'.repeat(9000)
+  const capped = queue.request({ tool: 'plugin_manager', code: { text: huge } })
+  assert.equal(queue.list()[2].code.text.length, 4000)
+
+  queue.resolve(entry.id, 'deny')
+  queue.resolve(queue.list()[0].id, 'deny')
+  queue.resolve(queue.list()[0].id, 'deny')
+  await Promise.all([withCode, blank, capped])
+  queue.dispose()
+})
+
 test('approval queue: pending calls resolve once, session allows are remembered and aborts fail closed', async () => {
   const audits = []
   const queue = createApprovalQueue({ getTimeoutMs: () => 60000, audit: { record: entry => audits.push(entry) } })

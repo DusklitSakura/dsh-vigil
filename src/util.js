@@ -16,6 +16,13 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 
 /** @returns {string} the OS user's home directory. */
+/**
+ * Default wait for an in-conversation approval before it expires into a deny.
+ * One definition: the schema, the runtime default and every fallback read it,
+ * so changing the policy timeout is a single edit.
+ */
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 120000
+
 export function getHomeDir() {
   return process.env.HOME || process.env.USERPROFILE || homedir()
 }

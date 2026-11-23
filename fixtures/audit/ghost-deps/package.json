@@ -1,0 +1,9 @@
+{
+  "name": "dsh-vigil-fixture-ghost-deps",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "dependencies": {
+    "ms": "2.1.3"
+  }
+}

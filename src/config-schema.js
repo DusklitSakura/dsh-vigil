@@ -24,6 +24,7 @@
  */
 
 import { DEFAULT_CONFIG } from './config.js'
+import { DEFAULT_APPROVAL_TIMEOUT_MS } from './util.js'
 
 /** @type {any} */
 let z = null
@@ -72,6 +73,8 @@ function buildSchema(schema) {
     dshPluginInstall: decision('ask').volatile().description('通过工具安装/移除插件的决策'),
     destructiveSystem: decision('deny').volatile().description('不可逆的系统破坏性操作（格盘/注册表/卷影/事件日志/安全防护关闭/证书等）'),
     destructiveData: decision('ask').volatile().description('大规模数据破坏操作（数据库/容器/云资源/Git 历史等）'),
+    canary: flag(false).volatile().description('埋入蜜罐诱饵值并检查出站请求是否携带它；命中即确认为凭证外泄（默认关闭）'),
+    runtimeGuard: flag(false).volatile().description('拦截插件代码在进程内直接删除/覆盖凭证或系统路径，以及下载即执行的命令（默认关闭；启用前请读 limitations）'),
     allowTools: list([]).volatile(),
   })
 
@@ -111,6 +114,11 @@ function buildSchema(schema) {
     ast: schema.object({
       enabled: flag(true).volatile(),
       level: text('medium').volatile().description('low/medium/high → notice/review/blocker'),
+    }),
+    osv: schema.object({
+      enabled: flag(false).volatile().description('安装前查询 OSV 已知漏洞（需要网络；不可达时按“未知”处理，不会当成干净）'),
+      url: text('https://api.osv.dev/v1/query').volatile(),
+      timeoutMs: count(2500).volatile(),
     }),
   })
 
@@ -158,7 +166,10 @@ function buildSchema(schema) {
       path: text('').volatile(),
       envVar: text('DSH_VIGIL_DISABLED').volatile(),
     }),
-    sentinel: sentinel(),
+    trust: schema.object({
+    officialPackages: list([]).volatile().description('视为官方包的名称或作用域（@scope / @scope/*）；官方包按内容哈希校验，不一致时降级为普通审计'),
+    pins: list([]).volatile().description('期望内容哈希：name@version=sha256；与状态目录里的首次安装记录（TOFU）合并使用'),
+  }),  sentinel: sentinel(),
     deleteGuard: deleteGuard(),
     sage: sage(),
     quarantine: quarantine(),
@@ -179,7 +190,7 @@ function buildSchema(schema) {
       enabled: flag(true).volatile(),
       includeAsk: flag(true).volatile(),
       inlineApproval: flag(true).volatile(),
-      approvalTimeoutMs: count(120000).volatile().description('对话内审批等待上限（毫秒）'),
+      approvalTimeoutMs: count(DEFAULT_APPROVAL_TIMEOUT_MS).volatile().description('对话内审批等待上限（毫秒）'),
       alert: schema.object({
         enabled: flag(true).volatile().description('未聚焦时提醒有待审批的请求'),
         sound: flag(true).volatile().description('播放提示音'),

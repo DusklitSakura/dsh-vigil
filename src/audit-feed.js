@@ -19,7 +19,7 @@
  * @module dsh-vigil/audit-feed
  */
 
-import { nowIso, sha256 } from './util.js'
+import { DEFAULT_APPROVAL_TIMEOUT_MS, nowIso, sha256 } from './util.js'
 import { quarantineView } from './quarantine-view.js'
 import { probeAlertWindow } from './alert-route.js'
 
@@ -122,7 +122,7 @@ export function buildAuditFeed(runtime, deps, options = {}) {
     approval: {
       /** The page can answer `ask` decisions itself instead of waiting on the host dialog. */
       enabled: runtime?.config?.notify?.inlineApproval !== false,
-      timeoutMs: Number(runtime?.config?.notify?.approvalTimeoutMs) || 120000,
+      timeoutMs: Number(runtime?.config?.notify?.approvalTimeoutMs) || DEFAULT_APPROVAL_TIMEOUT_MS,
       /** Per-session remembered allow state (blanket + per-finding). */
       sessions: (() => {
         try {

@@ -1,0 +1,8 @@
+{
+  "name": "dsh-vigil-fixture-sup-04",
+  "version": "1.0.0",
+  "main": "./src/index.js",
+  "dependencies": {
+    "left-pad": "http://mirror.example.invalid/left-pad.tgz"
+  }
+}

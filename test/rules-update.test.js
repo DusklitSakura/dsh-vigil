@@ -5,10 +5,10 @@
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { tempDir } from '../test-utils/temp.js'
 import {
   applyRulesUpdate,
   checkRulesUpdate,
@@ -21,15 +21,8 @@ import { getRulePack, pinRulePack, resetRulePack, defaultPack } from '../src/rul
 import { parseYaml } from '../src/rules/yaml.js'
 import { resolveConfig } from '../src/config.js'
 
-const dirs = []
-function tempDir() {
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-rules-update-'))
-  dirs.push(dir)
-  return dir
-}
 test.after(() => {
   resetRulePack()
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
 })
 
 /**

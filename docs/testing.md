@@ -9,7 +9,7 @@
 npm ci --ignore-scripts --no-audit --no-fund
 
 # 运行全部测试
-node --test
+node --test --test-concurrency=1 "test/*.test.js"
 
 # 项目脚本（串行运行）
 npm test
@@ -21,7 +21,7 @@ node --check client.js
 npm run test:coverage
 
 # CI 覆盖率门槛
-node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-lines=85 --test-coverage-branches=72 --test-coverage-functions=82
+node --test --test-concurrency=1 --experimental-test-coverage "test/*.test.js" --test-coverage-lines=85 --test-coverage-branches=72 --test-coverage-functions=82
 
 # 检查 npm 包文件白名单
 npm pack --dry-run
@@ -56,20 +56,29 @@ CI workflow 位于 `.github/workflows/ci.yml`：
 | `test/integration.test.js` | 真实 `apply()` 装配：钩子、工具、认证路由、审批、隔离区；规则更新接线与自检工具 smoke。 |
 | `test/review-fixes.test.js` | 历史评审缺陷回归、扫描器校准与 YAML / 规则包边界。 |
 | `test/rules-update.test.js` | 规则库检查 / 更新、清单校验与失败回滚。 |
+| `test/rule-contract.test.js` | 规则契约：每条 `VG-*` 的等级、行号、证据、文案与 confidence；夹具精确命中集合。契约见 [development.md §8](development.md#8-规则编写契约)。 |
+| `test/route-paths.test.js` | 服务端路由常量与 `client.js` 调用面一致；已知未使用路由显式登记。 |
+| `test/client-presets.test.js` | 设置页预设只引用真实表单字段，菜单与预设表互相覆盖。 |
+| `test/install-gate.test.js` | 页面安装门禁：blocker 询问、拒绝抛错、放行透传、去重与卸载还原；OSV 命中、依赖漏洞、升级能力 diff、哈希漂移与 TOFU 记录。 |
+| `test/runtime-guard.test.js` | 进程内守卫：凭证 / 系统路径拦截、普通路径放行、`fs.promises` 拒绝语义、`exec/spawn` 判定、canary 命中 fetch 与 http、attach / detach。 |
+| `test/runtime-ledger.test.js` | 破坏签名：批量删除、改名加密、写放大、读后覆盖的窗口 / 阈值与重复抑制。 |
+| `test/canary.test.js` | 诱饵令牌生成、落盘失败处理、URL / body / headers 命中与 base64 盲区。 |
+| `test/trust.test.js`、`test/install-baseline.test.js` | 官方包哈希（作用域名匹配、摘要确定性与内容敏感、pin 库）、能力基线往返与升级 diff。 |
+| `test/advisories.test.js`、`test/dep-advisories.test.js`、`test/semver-range.test.js` | OSV 归一化 / 查询失败语义、lockfile 依赖解析、`engines.node` 范围匹配。 |
+| `test/instruction-scan.test.js`、`test/endpoint-table.test.js` | 指令 / 技能文件注入判定与端点表（Slack / metadata / `.onion`）。 |
 | `fixtures/audit/**` | 用于静态扫描的惰性测试夹具，不会被导入或执行。 |
+| `fixtures/rules/**` | 单规则最小夹具，由契约测试逐条扫描（目录与契约表一一对应）。 |
 
 ## 4. 当前覆盖率快照
 
-`testing.md` 的本地基线记录（2026-11-23，Node 26，阈值 lines 85 / branches 72 / functions 82）：
+`testing.md` 的本地基线记录（2026-11-23 重测，Node 26，386 项测试，阈值 lines 85 / branches 72 / functions 82）：
 
 ```text
-lines      85.71%
-branches   72.75%
-functions  82.81%
+all files    |  87.23 |  74.57 |  84.30 |
+             |  lines | branches | functions
 ```
 
 这些数字是特定提交与本地环境的快照；改动后应重新运行覆盖率，不要将其当作未来版本的持续保证。
-
 当前测试总数见 [verification.md](verification.md)。`client.js` 不纳入 Node 覆盖率；它通过 `node --check` 与手动 UI 验收。
 
 ## 5. Client 手动验收清单
@@ -84,6 +93,8 @@ functions  82.81%
 6. **安装审计浮层：** blocker 使用 warning artwork；普通 notice 使用 notice artwork。
 7. **审批提醒：** 切到其他窗口触发 ask，分别验证提示音、Windows 通知与 DSH 窗口提醒；处理后或重新聚焦时，临时置顶 / 闪烁停止。
 8. **破坏性操作：** `format D:`、`reg delete HKLM\... /f`、`vssadmin delete shadows` 应按默认策略拒绝；`docker system prune`、`git push --force`、`DROP DATABASE` 应按默认策略进入询问。注意这些是规则路径的验收样例，不代表对任意变体都完整覆盖。
+9. **官方包信任列表：** 在「官方包信任」分组里分别粘贴多行名称与 `name@version=sha256`，保存后刷新页面确认按行回填；格式错误（非 64 位十六进制）不应被当作有效 pin。
+10. **运行时守卫 / 蜜罐开关：** 打开后确认设置页文案与默认关闭一致；关闭状态下不应影响普通插件调用（可在测试插件里调用临时文件删除验证放行）。
 
 触发方式可通过设置页改配置、`plugin_manager install_bundle` 安装 / 更新插件，或提交一个按当前策略会进入 ask 的测试命令。不要在真实数据目录执行破坏性测试。
 
@@ -105,7 +116,7 @@ functions  82.81%
 
 ## 8. 发版检查单
 
-1. `node --test` 全绿，`node --check client.js` 通过。
+1. `node --test --test-concurrency=1 "test/*.test.js"` 全绿，`node --check client.js` 通过。
 2. 覆盖率满足 lines / branches / functions 门槛。
 3. `npm pack --dry-run` 文件列表符合 `package.json` 白名单。
 4. 同步更新 `package.json` 与 `package-lock.json` 版本，并更新 `CHANGELOG.md`。

@@ -26,10 +26,13 @@
 ```
 
 - 自保护还有 `ctx.tools.guard()` 单调 guard，不只依赖 pre-execute 瀑布。
+- 插件页面（GUI）的本地路径安装不经过 `tools/pre-execute`：它调用宿主的 `pluginManager.installBundle`，由 `src/install-gate.js` 在该服务方法上补一层同样的扫描，并把结论放进同一套对话内确认框（`/api/dsh-vigil/approval`）。工具路径已经问过同一次安装时，服务层在 120 秒窗口内不再重复询问。
 - 运行时评估异常按 fail-closed 处理；审计写入异常不会改变已计算的调用决策。
 - Sage 为可选组件。一般单次评估失败会降级为内置规则并记录 `VG-SAGE-ERR`；只有 `sage.required: true` 时 Sage 不可用才直接拒绝相关调用。
 
 ## 2. 特殊运行时规则
+
+> **能力声明（可选）**：插件可以在 `package.json` 写 `dsh.capabilities: string[]`，取值限 `network / exec / credentials / fs-write / install-hooks / patch / client-ui / instructions`。扫描会把 finding 折算成同样的能力面，并在「观测到但未声明」时产出 `VG-SUP-15`（review）。不写声明就不会比对——没有依据时不猜作者意图。
 
 ### 2.1 设备路径
 
@@ -61,6 +64,30 @@
 > [!NOTE]
 > 上述规则基于命令与参数文本匹配，不执行命令。若命令只是 grep、搜索或展示包含 `diskpart` 等词语的文档，也可能匹配；遇到误报时应检查规则锚点与上下文，不要把命中视为已证明存在恶意行为。
 
+### 2.5 进程内运行时守卫（默认关闭）
+
+开启 `sentinel.runtimeGuard` 后，插件在宿主进程内直接调用以下 API 会被拦截：
+
+- `fs.unlink/rm/rmdir/writeFile/appendFile/rename/copyFile/truncate`（含 `Sync` 与 `fs.promises`）作用在凭证文件或系统路径上 → 阻止并审计 `VG-RT-16`；
+- `child_process.exec/execFile/spawn/fork` 的命令文本命中下载即执行模式 → 阻止并审计 `VG-RT-17`。
+
+这些 API 大多是同步的，等不了对话内审批，因此策略是直接拒绝而不是询问；调用方会收到 `VigilRuntimeBlock`。守卫会跳过来自本包 `src/` 的调用（否则审计写日志会被自己拦死）。盲区：ESM 命名导入（`import { unlinkSync } from 'node:fs'`）在守卫安装前已绑定、`worker_threads`、原生模块与插件拉起的子进程都拦不到。
+
+### 2.6 破坏签名台账
+
+台账挂在同一批 choke point 上，按 10 秒窗口统计：
+
+- 批量删除：≥20 次 `unlink/rm/rmdir`；
+- 改名加密（疑似勒索）：≥5 次 `rename` 且目标扩展名是随机十六进制；
+- 写放大：≥50 次写 / 截断；
+- 读后覆盖（疑似擦除）：≥3 次覆写同一窗口内读过的文件。
+
+命中写 `runtime-ledger` 审计记录（`VG-RT-18`）。只观测、不改判定：批量清理缓存和勒索在单次调用上无法区分，台账负责事后可解释。
+
+### 2.7 蜜罐 canary（默认关闭）
+
+开启 `sentinel.canary` 后，每次运行时生成都会在状态目录写一份凭据形状的诱饵文件（内含随机令牌，令牌每进程轮换）。运行时守卫检查 `fetch` 与 `http/https` 的 `request/get`：URL、options、headers 中出现同一令牌即阻止并确认外泄（`VG-RT-19`）。令牌只存在于内存与诱饵文件，正常流量不可能携带。盲区：`net`、请求体流、子进程外发与编码后的载荷看不到。
+
 ## 3. 路径与命令语义
 
 ### 3.1 自保护按目标判定
@@ -87,6 +114,10 @@ cd <插件目录>; Remove-Item $env:TEMP\sample.tmp
 - `atob(...)`
 - `FromBase64String(...)`
 - 十六进制转义序列
+- `String.fromCharCode(...)`（连续 ≥8 个码点）
+- 常量字符串拼接（`'https://' + 'host' + '/path'`）
+
+解码 / 折叠结果会再交给外发端点、凭证路径与系统路径判定；命中 `VG-DYN-12`。只做字面量折叠，不做变量数据流；与本行无关的字面量不会被拼接。
 
 变量之间传递、运行时拼接或加密的载荷无法可靠静态还原，见 [limitations.md](limitations.md)。
 
@@ -114,6 +145,14 @@ const run = cp.exec
 凭证范围包括 `.ssh`、`.aws`、`.npmrc`、`.pem`、`.env`，以及 `.docker/config.json`、`.kube/config`、`gh/hosts.yml` 等常见凭证文件。检测也覆盖部分 PowerShell `-InFile`、`scp` / `sftp` 与 `process.env` 解构写法。
 
 配置篡改规则只针对 Harness 宿主配置位置，例如 `.dsh/profiles`。写入插件自己的 `settings.json` 不应被视为修改宿主安全设置；仅在文案中提到 `~/.dsh` 也不等于读取该目录。
+
+### 3.7 覆盖度、能力清单与升级 diff
+
+- 报告新增 `coverage` 字段：`code / scripts / instructions / patch / manifest / deps / assets` 各自标注 `covered / partial / absent / unreadable / excluded / unsupported`；任一风险面未完整覆盖时产出 **`VG-SCAN-06`**，卡片显示“覆盖度不足”。`deps` 明确标 `unsupported`（扫描器不遍历 `node_modules`）。
+- 报告新增 `capabilities` 字段（network / exec / credentials / fs-write / install-hooks / patch / client-ui / instructions）；插件可在 `package.json` 声明 `dsh.capabilities`，观测到未声明能力时产出 **`VG-SUP-15`**。
+- 本地安装门禁会把本次能力与上次记录比较，新增能力触发 **`VG-SUP-16`** 询问；声明基线保存在状态目录。
+- 可选 `scan.osv.enabled` 在安装前查询 OSV（包本体 + lockfile 依赖），命中 **`VG-SUP-12`**；查询失败按“未知”处理。
+- 可选 `trust.officialPackages` / `trust.pins` 按内容哈希校验官方包，漂移会触发 **`VG-SUP-17`** 询问；首次接受的官方包写入 TOFU pin，接受漂移不会覆写 pin。
 
 ## 4. 删除保护与规模估算
 

@@ -1,0 +1,6 @@
+{
+  "name": "dsh-vigil-fixture-scan-05",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/broken.js"
+}

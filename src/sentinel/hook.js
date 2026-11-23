@@ -31,6 +31,7 @@ import { strictestDecision } from '../config.js'
 import { summarizeArguments, redactSecrets } from '../audit-log.js'
 import { scanPluginDirectory } from '../audit/scan.js'
 import { resolveLocalInstallTarget, summarizeInstallScan } from '../audit/install-scan.js'
+import { markToolGated, evidenceCode } from '../install-gate.js'
 import { getHomeDir, resolvePath, truncate } from '../util.js'
 import { inspectSelfProtection } from './guard.js'
 import {
@@ -197,6 +198,8 @@ export function createInterceptor(options) {
       const reasons = []
       /** @type {string[]} */
       const ruleIds = []
+      /** @type {{ language: string, text: string } | null} */
+      let approvalCode = null
 
       // 1. Deletion intent (shell text or a delete/move tool).
       let assessment = null
@@ -275,12 +278,18 @@ export function createInterceptor(options) {
                   const riskList = scanSummary.blockerReasons.length > 0 ? scanSummary.blockerReasons : scanSummary.reasons
                   const risk = riskList.length > 0 ? riskList.slice(0, 3).join('；') : '存在高风险代码'
                   const riskPrompt = `该插件有 ${scanSummary.blockers} 个高危命中：${risk}。是否继续安装？`
+                  // This call reaches `pluginManager.installBundle` afterwards; do
+                  // not ask the same question twice for one install.
+                  markToolGated(target.dir)
+                  approvalCode = evidenceCode(scanSummary)
                   findings.push({ ruleId: 'VG-AUDIT-01', kind: 'ask', reason: riskPrompt })
                   reasons.push(riskPrompt)
                 } else if (scanSummary.incomplete) {
                   // "No blockers" is only meaningful when the scanner read the
                   // package; a padded/oversized/truncated scan is a question.
                   const coveragePrompt = `静态审计未能覆盖该插件的全部文件：${scanSummary.coverageNote}。是否仍要继续安装？`
+                  markToolGated(target.dir)
+                  approvalCode = evidenceCode(scanSummary)
                   findings.push({ ruleId: 'VG-AUDIT-02', kind: 'ask', reason: coveragePrompt })
                   reasons.push(coveragePrompt)
                 }
@@ -373,6 +382,7 @@ export function createInterceptor(options) {
             const outcome = await approval.request({
               tool: toolName,
               command: approvalDetail,
+              code: approvalCode,
               reason: reasonText ?? '',
               ruleIds: dedupedRuleIds,
               sage: sageMetadata,

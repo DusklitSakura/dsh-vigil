@@ -115,6 +115,8 @@ DSH 会记录 Git 安装来源，并使用自己的插件管理流程处理后�
 
 后台 watcher 观察 `<DSH_HOME>/profiles/*` 下的 profile `package.json` 与对应 `node_modules`。新增依赖会作为 install 扫描；依赖范围或实际安装版本改变会作为 update 扫描。插件管理事件可更早触发；兜底轮询间隔为 60 秒。
 
+本地路径安装门禁在静态扫描之外，还会按配置执行：OSV 已知漏洞查询（`scan.osv.enabled`，含 lockfile 依赖）、官方包内容哈希比对（`trust.officialPackages` / `trust.pins`）、升级能力 diff 与能力声明一致性。默认配置下这些扩展全部关闭或为空，门禁保持离线；任何网络查询失败都按“未知”继续，不会把安装判成干净。
+
 ## 5. 停用与紧急停机
 
 ### 正常停用

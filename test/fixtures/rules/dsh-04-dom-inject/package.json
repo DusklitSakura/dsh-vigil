@@ -1,0 +1,11 @@
+{
+  "name": "dsh-vigil-fixture-dsh-04",
+  "version": "1.0.0",
+  "type": "module",
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

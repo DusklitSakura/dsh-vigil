@@ -1,0 +1,6 @@
+{
+  "name": "dsh-vigil-fixture-destructured-fs",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/destructured.js"
+}

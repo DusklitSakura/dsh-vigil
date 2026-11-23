@@ -1,0 +1,9 @@
+{
+  "name": "dsh-vigil-fixture-dyn-04",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "dependencies": {
+    "@scope/lazy-module": "1.0.0"
+  }
+}

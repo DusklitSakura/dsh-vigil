@@ -72,6 +72,17 @@
   </tr>
 </table>
 
+### 新增能力（默认关闭或按需启用）
+
+- 覆盖度状态：报告的 `coverage` 字段说明哪些风险面真正被读到；`deps` 会明确标为 `unsupported`，不会假装覆盖。
+- 能力清单与升级 diff：报告汇总 `capabilities`；插件可声明 `dsh.capabilities`，升级新增能力时用 `VG-SUP-16` 单独询问。
+- 已知漏洞：打开 `scan.osv.enabled` 后安装前查询 OSV（含 `package-lock.json` 里解析出的依赖）。
+- 官方包内容哈希信任：`trust.officialPackages` / `trust.pins`，按内容哈希而不是包名信任。
+- 进程内运行时守卫（`sentinel.runtimeGuard`）：拦截插件直接删除凭证 / 系统路径，以及下载即执行。
+- 破坏签名台账（`VG-RT-18`）：批量删除、改名加密、写放大、读后覆盖。
+- 蜜罐 canary（`sentinel.canary`）：埋入诱饵令牌，命中出站请求即确认为凭证外泄（fetch 与 http/https）。
+- 规则编写契约：新增或修改 `VG-*` 规则请按 [docs/development.md §8](docs/development.md#8-规则编写契约) 的六件套执行。
+
 ### 工作方式
 
 ```text

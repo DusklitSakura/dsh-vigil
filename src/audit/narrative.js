@@ -18,7 +18,7 @@ export const CATEGORIES = [
   'supply-chain',
   'dsh-attack',
   'unknown',
-];
+]
 
 /** Human labels (Chinese) for the risk categories. */
 export const CATEGORY_LABELS = {
@@ -29,22 +29,22 @@ export const CATEGORY_LABELS = {
   'supply-chain': '供应链',
   'dsh-attack': 'dsh 特有攻击面',
   unknown: '未知',
-};
+}
 
 /** Severity ranks; higher sorts first. */
-export const SEVERITY_RANK = { blocker: 4, review: 3, notice: 2, info: 1 };
+export const SEVERITY_RANK = { blocker: 4, review: 3, notice: 2, info: 1 }
 
 /** Human labels (Chinese) for severities. */
-export const SEVERITY_LABELS = { blocker: '高危', review: '可疑', notice: '提示', info: '信息' };
+export const SEVERITY_LABELS = { blocker: '高危', review: '可疑', notice: '提示', info: '信息' }
 
 /** Attribution stamped on every built-in rule finding (Apache-2.0). */
-export const RULE_ATTRIBUTION = 'dsh-vigil builtin rules (Apache-2.0)';
+export const RULE_ATTRIBUTION = 'dsh-vigil builtin rules (Apache-2.0)'
 
 /**
  * Honest disclaimer: static analysis cannot see runtime-variable behaviour.
  * Included verbatim in every report and printed by the terminal card.
  */
-export const DISCLAIMER = '本报告由静态文本/正则分析生成，绝不执行被扫描插件的任何代码。静态扫描无法覆盖运行时可变行为（例如从网络动态下载后再执行的代码、由环境变量或远程配置决定的逻辑、被编码/混淆的内容），因此“未发现风险”不等于“插件安全”。请结合插件来源、签名、发布者信誉与人工复核后再决定是否安装。';
+export const DISCLAIMER = '本报告由静态文本/正则分析生成，绝不执行被扫描插件的任何代码。静态扫描无法覆盖运行时可变行为（例如从网络动态下载后再执行的代码、由环境变量或远程配置决定的逻辑、被编码/混淆的内容），因此“未发现风险”不等于“插件安全”。请结合插件来源、签名、发布者信誉与人工复核后再决定是否安装。'
 
 /**
  * Per-rule narratives. Placeholders like `{host}` are filled from finding vars;
@@ -69,6 +69,17 @@ const NARRATIVES = {
     means: '这意味着：插件会读取环境变量中的凭证类配置（{name}）。这类值通常包含 API Key 或访问令牌，可能被记录、缓存或外发。',
     mitigation: '确认该环境变量属于插件自身配置；不要复用高权限令牌，必要时为插件单独签发最小权限凭据。',
   },
+  'VG-CRED-06': {
+    means: '这意味着：文件里既读取了凭证路径（{path}），又向外部地址（{host}）发起请求。两者同时出现，构成"读凭证并外发"的完整链路。',
+    mitigation: '拒绝安装；确认插件没有需要读取本机凭证的功能，若确有需要应改为由用户显式授权的最小接口。',
+  },
+  'VG-CRED-07': {
+    means: '这意味着：文件里既读取了凭证类环境变量（{name}），又向外部地址（{host}）发起请求。环境变量常放 API key，外发即泄露。',
+    mitigation: '拒绝安装；确认环境变量读取与网络请求是否属于同一功能路径，必要时要求作者移除。',
+  },  'VG-CRED-05': {
+    means: '这意味着：插件会对本机凭证文件（{path}）执行删除或覆盖类操作（{op}）。密钥只有一份，这类操作不可逆，且通常是为了抹掉痕迹或阻断后续登录。',
+    mitigation: '拒绝安装；确需使用时先在隔离环境验证并用备份恢复，不要让它碰到真实的 ~/.ssh、~/.aws、~/.dsh 凭据。',
+  },
   'VG-NET-01': {
     means: '这意味着：插件会向非白名单主机（{host}）发起网络请求。插件可以把本机文件、会话内容或凭证发送到该地址。',
     mitigation: '确认该主机是插件功能必需且由可信方控制；若无法确认，请阻止安装或在网络层限制该域名的出站访问。',
@@ -85,7 +96,86 @@ const NARRATIVES = {
     means: '这意味着：插件存在网络外发调用（{api}），但目标地址无法从静态代码中确定。实际目标可能由配置、环境变量或运行时计算得出。',
     mitigation: '在隔离环境中运行并抓包确认目标；审查该插件配置项中所有可改变 URL 的字段。',
   },
-  'VG-DYN-01': {
+  'VG-SUP-10': {
+    means: '这意味着：插件声明的 DSH 版本要求（{field} = {spec}）不包含当前运行的 {have}。装上去以后要么加载失败，要么行为与作者验证过的版本不一致。',
+    mitigation: '先向作者确认支持的 DSH 版本；不要为了装上而改动宿主版本要求，升级或换用匹配的插件版本。',
+  },
+  'VG-SUP-11': {
+    means: '这意味着：代码 import 了 {name}，但 package.json 的依赖里没有它。干净安装时它可能根本不存在（只靠传递依赖碰巧能跑），升级或换包管理器就会炸。',
+    mitigation: '要求作者把该依赖写进 dependencies；不要依赖传递依赖的偶然提升。',
+  },
+  'VG-SUP-12': {
+    means: '这意味着：当前版本命中已知漏洞 {id}（{summary}）。攻击者可用现成的公开利用方式，不需要插件作者再犯错。',
+    mitigation: '升级到修复版本；暂时无法升级时，确认该漏洞的影响面并在隔离环境使用。',
+  },
+  'VG-SUP-13': {
+    means: '这意味着：清单声明的{kind}（{path}）在包内不存在。DSH 安装后会加载失败并回滚，安装过程可能已经改过 profile 文件。',
+    mitigation: '核对路径拼写与发布内容是否一致（是否漏发文件、是否被 .npmignore 排除）；确认前不要安装。',
+  },
+  'VG-SUP-14': {
+    means: '这意味着：包声明自己是 DSH 插件（存在 dsh 字段），但既没有入口文件也没有 bundle patch，宿主没有可加载的内容。',
+    mitigation: '向作者确认发布内容；纯配置 bundle 应该声明 dsh.bundle.patch，否则装上也挂不载。',
+  },
+  'VG-DYN-12': {
+    means: '这意味着：一段编码或拼接的字符串还原后是{kind}（{detail}）。明文里放这些东西会被直接看到，所以作者把它们编码起来了——这是刻意隐藏，而不是普通数据。',
+    mitigation: '拒绝安装；如果作者声称是配置里的编码数据，要求给出明文与用途。',
+  },
+  'VG-DYN-07': {
+    means: '这意味着：插件调用了 {api}。这类接口用来拿到模块系统之外的内部对象（例如直接取 fs），通常出现在需要绕过沙箱或隐藏意图的代码里。',
+    mitigation: '拒绝安装或要求作者改用普通 import；确认没有“动态取模块再执行”的后续逻辑。',
+  },
+  'VG-DYN-08': {
+    means: '这意味着：插件会改写{target}的方法或属性。同一进程里的其他插件与宿主都会受影响，常见于劫持行为或越权读取。',
+    mitigation: '拒绝安装；若作者声称用于 polyfill，要求限定作用域并给出回滚路径。',
+  },
+  'VG-DYN-09': {
+    means: '这意味着：插件一次性申请约 {size} 个元素/字节。这在加载阶段就能把宿主拖进 OOM 或长时间 GC。',
+    mitigation: '确认分配上界与用途；无上限的分配应改为流式/分块处理，否则不要安装。',
+  },
+  'VG-INJ-08': {
+    means: '这意味着：插件访问了 ctx.{member}。这些成员不在普通插件的注入面里，访问它们说明代码在尝试越权或探测宿主内部。',
+    mitigation: '确认插件声明了对应的服务；用 ctx.get/services 正常注入，而不是直接摸特权成员。',
+  },
+  'VG-SUP-17': {
+    means: '这意味着：这个包的名称声明自己是官方包，但内容哈希与已记录的不一致（期望 {expected}，实际 {actual}）。同名不等于同内容——这是被替换或篡改的信号。',
+    mitigation: '不要安装；核对发布来源与版本，确认哈希变动是否来自官方发布，必要时删除本地副本重新获取。',
+  },
+  'VG-SUP-19': {
+    means: '这意味着：package.json 声明了依赖（{names}），但当前安装目录里没有它们。运行时会直接 import 失败，或悄悄用到别处的副本。',
+    mitigation: '重新执行完整安装（不要用 --no-optional 之类跳过的参数）；确认依赖没有被手工删除。',
+  },  'VG-SUP-18': {
+    means: '这意味着：插件声明只支持 Node {spec}，而当前运行的是 {have}。行为与作者验证过的环境不一致，可能加载失败或出现未测试的路径。',
+    mitigation: '确认插件是否有兼容当前版本的新版本；不能升级时避免在生产环境使用。',
+  },  'VG-SUP-16': {
+    means: '这意味着：与上次扫描到的版本相比，这个版本多出了能力（{added}）。供应链攻击最常见的形态就是先用干净版本建立信任，再在升级版里加后门。',
+    mitigation: '核对新增能力的来源与用途，确认是本次更新的真实需求；不确认就停在旧版本。',
+  },
+  'VG-SUP-15': {
+    means: '这意味着：清单声明了 dsh.capabilities，但代码实际具备未声明的能力（{missing}）。声明与实现不一致，读者按清单判断权限会低估它。',
+    mitigation: '要求作者补齐声明或移除多余能力；声明与实现一致之前，按代码实际能力评估风险。',
+  },
+  'VG-INJ-07': {
+    means: '这意味着：这份指令/技能文件先要求改写既有规则（{verb}），又指向敏感动作（{action}）。DSH 会把文件内容交给模型，恶意文本可以不需要任何代码就诱导它读取或外发数据。',
+    mitigation: '拒绝安装或删除该文件；若确为安全测试样例，请确认它不会被当作指令加载（例如放在普通文档目录）。',
+  },
+  'VG-DYN-16': {
+    means: '这意味着：{detail}。它可能在加载或调用时占满 CPU/内存，把宿主拖到无响应；资源问题同样能造成可用的服务中断。',
+    mitigation: '要求作者补上退出条件或限制循环次数；正则改为无嵌套量词/限制长度的写法，确认前不要安装。',
+  },  'VG-DYN-15': {
+    means: '这意味着：源码文本里出现了下载即执行模式（{detail}），但同一行没有可执行调用。它可能是文案/帮助文本，也可能是后续会被拼接执行的载荷。',
+    mitigation: '确认这段文本的用途；如果它会被传给 shell/exec 调用，按高风险处理。',
+  },  'VG-DYN-11': {
+    means: '这意味着：插件会对系统关键路径（{path}）执行删除或覆盖（{op}）。这不是插件自己的文件，破坏后影响整机，且通常不可逆。',
+    mitigation: '拒绝安装；确认插件没有需要改动系统目录的功能，必要时在隔离环境验证。',
+  },
+  'VG-DYN-13': {
+    means: '这意味着：动态执行（{detail}）与网络外发（{host}）或下载即执行同时出现，等于"拿到远程代码并运行"的完整链路。',
+    mitigation: '拒绝安装；动态执行不应与网络输入组合出现，要求作者改为静态导入与固定逻辑。',
+  },
+  'VG-DYN-14': {
+    means: '这意味着：代码从远程 URL 动态导入模块（{target}）。模块内容不受包内哈希约束，等同于安装时获取并执行任意代码。',
+    mitigation: '拒绝安装；动态导入只应指向包内相对路径或 node: 内建模块。',
+  },  'VG-DYN-01': {
     means: '这意味着：插件使用 eval / new Function 之类的动态代码执行能力（{detail}）。它可以在运行时执行拼接出来的字符串，静态扫描无法预知其行为。',
     mitigation: '要求作者移除动态执行；如无法移除，请在隔离环境运行并重点审查所有传入动态执行的字符串来源。',
   },
@@ -120,6 +210,10 @@ const NARRATIVES = {
   'VG-CFG-03': {
     means: '这意味着：插件试图修改或声明高风险权限策略（{detail}）。它可能在未经审批的情况下获得完整文件系统与命令执行权限。',
     mitigation: '拒绝安装；dsh 的 sandbox/approval/permission 设置不应由插件静默改写。',
+  },
+  'VG-CFG-05': {
+    means: '这意味着：插件在可执行代码里声明了高风险权限（{detail}），例如申请完整文件系统/命令执行权限。声明即生效，后续操作不再经过审批边界。',
+    mitigation: '拒绝安装；dsh 的 sandbox/approval/permission 设置不应由插件声明或改写，确需调整请由你自己在设置里改。',
   },
   'VG-CFG-04': {
     means: '这意味着：插件会写入 DSH_* 环境变量（{name}）。这会影响 dsh 其它插件或后续进程的行为，形成跨插件污染。',
@@ -197,7 +291,10 @@ const NARRATIVES = {
     means: '这意味着：插件浏览器端代码同时具备存储访问与网络外发能力（{detail}）。这是一个可能的凭据外发形状；静态扫描只能证明能力共现，不能证明两者之间存在数据流。',
     mitigation: '视为高风险：拒绝安装并在浏览器网络面板核实；不要在该 dsh profile 中启用该插件。',
   },
-  'VG-DSH-04': {
+  'VG-DSH-07': {
+    means: '这意味着：客户端代码调用了网络接口（{api}），但整个文件没有绝对远程地址，请求只可能是同源/相对路径。这是正常的前后端通信，不是外发。',
+    mitigation: '一般无需处理；如果该文件本不该访问网络，再确认它的路由来源。',
+  },  'VG-DSH-04': {
     means: '这意味着：插件浏览器端代码会直接操作 DOM 或注入 iframe/脚本（{detail}）。这可能劫持页面、伪造界面或执行注入代码。',
     mitigation: '审查注入内容是否来自可信静态资源；拒绝动态拼接 HTML 的插件。',
   },
@@ -225,17 +322,21 @@ const NARRATIVES = {
     means: '这意味着：AST 别名分析不可用（{detail}），本次只能依赖正则规则；通过变量别名调用的能力可能漏报。',
     mitigation: '确认 acorn 依赖已安装后重新扫描；若仍不可用，请把该结论当作“覆盖不完整”，不要当作“未发现风险”。',
   },
+  'VG-SCAN-06': {
+    means: '这意味着：本次扫描没有完整覆盖 {surfaces}。这些面里可能存在规则看不到的内容，“未发现风险”不等于这些面是干净的。',
+    mitigation: '先用 vigil_scan 分别扫描这些子目录 / 修复不可读文件，再判断是否安装；不要只凭 0 高危就放行。',
+  },
   'VG-SCAN-04': {
     means: '这意味着：包声明的入口位于未扫描目录（{dirs}，构建产物）。扫描器为控制开销跳过了该目录，因此“未发现风险”并不覆盖真正会运行的代码。',
     mitigation: '发布时带上源码目录，或先构建再重新扫描；只拿到构建产物时，不要仅凭本报告的 0 高危结论安装。',
   },
-};
+}
 
 /** Fallback narrative for unknown rule ids. */
 const FALLBACK_NARRATIVE = {
   means: '这意味着：扫描器在插件中命中了规则「{ruleId}」描述的可疑模式。',
   mitigation: '人工复核该处代码与调用来源；无法确认时不要安装。',
-};
+}
 
 /**
  * Replace `{placeholder}` tokens with finding variables.
@@ -244,13 +345,18 @@ const FALLBACK_NARRATIVE = {
  * @param {Record<string, unknown>} [vars]
  * @returns {string}
  */
+/** Whether a rule id has its own tailored narrative (not the fallback). */
+export function hasNarrative(ruleId) {
+  return Object.prototype.hasOwnProperty.call(NARRATIVES, ruleId)
+}
+
 export function interpolate(template, vars = {}) {
-  const text = typeof template === 'string' ? template : '';
+  const text = typeof template === 'string' ? template : ''
   return text.replace(/\{([a-z][a-z0-9_]*)\}/gi, (_match, key) => {
-    const value = vars && Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : undefined;
-    if (value === undefined || value === null || value === '') return '（未确定）';
-    return String(value);
-  });
+    const value = vars && Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : undefined
+    if (value === undefined || value === null || value === '') return '（未确定）'
+    return String(value)
+  })
 }
 
 /**
@@ -261,11 +367,11 @@ export function interpolate(template, vars = {}) {
  * @returns {{ means: string, mitigation: string }}
  */
 export function buildNarrative(ruleId, vars = {}) {
-  const entry = NARRATIVES[ruleId] ?? FALLBACK_NARRATIVE;
+  const entry = NARRATIVES[ruleId] ?? FALLBACK_NARRATIVE
   return {
     means: interpolate(entry.means, { ...vars, ruleId }),
     mitigation: interpolate(entry.mitigation, { ...vars, ruleId }),
-  };
+  }
 }
 
 /**
@@ -278,15 +384,15 @@ export function buildNarrative(ruleId, vars = {}) {
 export function escalationSentence(kind, vars = {}) {
   switch (kind) {
     case 'credential-network':
-      return `此外，同一文件中同时存在网络外发能力（${vars.host || '目标不确定'}），凭证可能在一次调用中被直接发送到外部。`;
+      return `此外，同一文件中同时存在网络外发能力（${vars.host || '目标不确定'}），凭证可能在一次调用中被直接发送到外部。`
     case 'dynamic-network':
-      return `此外，同一文件还具备网络外发能力（${vars.host || '目标不确定'}），可形成“下载 → 执行”的完整链路。`;
+      return `此外，同一文件还具备网络外发能力（${vars.host || '目标不确定'}），可形成“下载 → 执行”的完整链路。`
     case 'env-network':
-      return `此外，同一文件存在网络外发能力（${vars.host || '目标不确定'}），读到的凭证可能被外发。`;
+      return `此外，同一文件存在网络外发能力（${vars.host || '目标不确定'}），读到的凭证可能被外发。`
     case 'client-exfil':
-      return `此外，同一文件同时出现存储访问（${vars.storage || '本地存储/cookie'}）和网络请求（${vars.egress || '外发'}）；它们可能被组合成外传链路，但这只是静态共现，不代表数据实际流入请求，需要人工确认。`;
+      return `此外，同一文件同时出现存储访问（${vars.storage || '本地存储/cookie'}）和网络请求（${vars.egress || '外发'}）；它们可能被组合成外传链路，但这只是静态共现，不代表数据实际流入请求，需要人工确认。`
     default:
-      return '';
+      return ''
   }
 }
 
@@ -298,9 +404,9 @@ export function escalationSentence(kind, vars = {}) {
  * @returns {string}
  */
 export function truncateEvidence(value, max = 240) {
-  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-  if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(0, max - 1))}…`;
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim()
+  if (text.length <= max) return text
+  return `${text.slice(0, Math.max(0, max - 1))}…`
 }
 
 /**
@@ -316,5 +422,5 @@ export function redactEvidence(value) {
     .replace(/\b(?:AKIA|ASIA)[0-9A-Z]{12,}\b/g, (m) => `${m.slice(0, 4)}***`)
     .replace(/\b(?:sk-|ghp_|gho_|ghu_|ghs_|github_pat_|xox[baprs]-|AIza|glpat-)[A-Za-z0-9_-]{8,}\b/g, (m) => `${m.slice(0, 6)}***`)
     .replace(/(['"`])([A-Za-z0-9+/_=-]{24,})\1/g, (_m, quote, body) => `${quote}${body.slice(0, 4)}***${quote}`)
-    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, 'eyJ***（JWT 已隐藏）');
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, 'eyJ***（JWT 已隐藏）')
 }

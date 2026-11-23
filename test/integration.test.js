@@ -7,8 +7,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { tempDir } from '../test-utils/temp.js'
@@ -351,7 +350,7 @@ test('apply: registers the authenticated audit feed and approval routes', async 
       },
     })
     await apply(ctx, { notify: { enabled: true } })
-    assert.equal(routes.length, 9)
+    assert.equal(routes.length, 8)
     const feed = routes.find(route => route.path === '/api/dsh-vigil/audit')
     const approval = routes.find(route => route.path === '/api/dsh-vigil/approval')
     const quarantine = routes.find(route => route.path === '/api/dsh-vigil/quarantine')
@@ -359,7 +358,6 @@ test('apply: registers the authenticated audit feed and approval routes', async 
     const auditClear = routes.find(route => route.path === '/api/dsh-vigil/audit-clear')
     const sageAction = routes.find(route => route.path === '/api/dsh-vigil/sage-action')
     const rulesUpdate = routes.find(route => route.path === '/api/dsh-vigil/rules-update')
-    const artwork = routes.find(route => route.path === '/api/dsh-vigil/artwork')
     const alertWindow = routes.find(route => route.path === '/api/dsh-vigil/alert-window')
     assert.ok(feed, 'audit feed route must be registered')
     assert.ok(approval, 'approval route must be registered')
@@ -368,10 +366,8 @@ test('apply: registers the authenticated audit feed and approval routes', async 
     assert.ok(auditClear, 'audit clear route must be registered')
     assert.ok(sageAction, 'Sage maintenance route must be registered')
     assert.ok(rulesUpdate, 'rules update route must be registered')
-    assert.ok(artwork, 'artwork route must be registered')
     assert.ok(alertWindow, 'approval alert route must be registered')
     assert.deepEqual(rulesUpdate.methods, ['GET', 'POST'])
-    assert.deepEqual(artwork.methods, ['GET'])
     assert.deepEqual(alertWindow.methods, ['POST'])
     assert.deepEqual(feed.methods, ['GET', 'HEAD'])
     assert.deepEqual(approval.methods, ['GET', 'POST'])

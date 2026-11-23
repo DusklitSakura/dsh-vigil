@@ -136,6 +136,25 @@ export function defaultPack() {
         // `const send = fetch` keeps the capability while hiding the callee name.
         { api: 'fetch (别名)', source: '=\\s*(?:window\\s*\\.\\s*)?fetch\\s*(?:[;,\\n)]|$)' },
       ],
+      // Download-and-execute shapes, applied to JS string literals and to the
+      // contents of shipped shell/PowerShell scripts. `id` names the rule the
+      // engine emits; the engine ignores ids it does not know, so an external
+      // pack cannot invent a rule.
+      suspiciousEndpoints: [
+        { label: '一次性采集站', flags: 'i', source: 'ngrok(?:-free)?\\.(?:io|app|dev)|requestbin|pipedream\\.net|beeceptor\\.com|interact\\.sh|0x0\\.st' },
+        { label: 'pastebin 类', flags: 'i', source: 'pastebin|paste\\.ee|transfer\\.sh|termbin\\.com|hastebin\\.com|ghostbin\\.io|file\\.io|gofile\\.io|anonfiles\\.com|sendspace\\.com' },
+        { label: 'OOB 外联', flags: 'i', source: 'oast\\.(?:pro|fun|me|live|site)|burpcollaborator' },
+        { label: 'webhook.site', flags: 'i', source: 'webhook\\.site' },
+        { label: '消息 webhook', flags: 'i', source: 'discord(?:app)?\\.com\\/api\\/webhooks|api\\.telegram\\.org\\/bot|hooks\\.slack\\.com\\/services' },
+        { label: '云 metadata', flags: 'i', source: '169\\.254\\.169\\.254|metadata\\.google\\.internal|100\\.100\\.100\\.200' },
+        { label: 'Tor 隐藏服务', flags: 'i', source: '\\\\b(?:[a-z2-7]{16}|[a-z2-7]{56})\\.onion\\\\b' },
+      ],
+      scriptPatterns: [
+        { id: 'VG-DYN-03', detail: '下载并通过 shell/PowerShell 管道执行', source: '(?:curl|wget)\\b[^\\n|]{0,400}\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh|dash|ksh|fish|iex|Invoke-Expression|powershell|pwsh|cmd(?:\\.exe)?)\\b', flags: 'i' },
+        { id: 'VG-DYN-03', detail: '下载并通过 shell/PowerShell 管道执行', source: '(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\\b[^\\n|]{0,400}\\|\\s*(?:iex|Invoke-Expression|powershell|pwsh|cmd(?:\\.exe)?|sh|bash)\\b', flags: 'i' },
+        { id: 'VG-DYN-03', detail: 'PowerShell -EncodedCommand', source: '\\bpowershell(?:\\.exe)?\\b[^\\n|]{0,120}?\\s(?:-|--)?(?:enc|encodedcommand)\\b', flags: 'i' },
+        { id: 'VG-DYN-01', detail: 'PowerShell Invoke-Expression / iex', source: '\\b(?:iex|Invoke-Expression)\\b', flags: 'i' },
+      ],
     },
     sources: [],
     warnings: [],
@@ -166,6 +185,7 @@ function compilePattern(entry, file) {
     kind: typeof entry.kind === 'string' ? entry.kind : undefined,
     detail: typeof entry.detail === 'string' ? entry.detail : undefined,
     api: typeof entry.api === 'string' ? entry.api : undefined,
+    id: typeof entry.id === 'string' ? entry.id : undefined,
     source: entry.source,
   }
 }
@@ -181,6 +201,8 @@ const SECTIONS = {
   privilegePatterns: 'audit',
   patchPrivilegePatterns: 'audit',
   egressPatterns: 'audit',
+  scriptPatterns: 'audit',
+  suspiciousEndpoints: 'audit',
 }
 
 /**
@@ -252,6 +274,8 @@ function compileDefaultPack() {
       privilegePatterns: raw.audit.privilegePatterns,
       patchPrivilegePatterns: raw.audit.patchPrivilegePatterns,
       egressPatterns: raw.audit.egressPatterns,
+      scriptPatterns: raw.audit.scriptPatterns,
+      suspiciousEndpoints: raw.audit.suspiciousEndpoints,
     }, 'builtin-fallback', pack)
   }
   return pack

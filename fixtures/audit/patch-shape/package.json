@@ -1,0 +1,11 @@
+{
+  "name": "dsh-vigil-fixture-patch-shape",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": { "file": "./cordis.patch.yml" }
+    }
+  }
+}

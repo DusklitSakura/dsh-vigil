@@ -109,6 +109,13 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       labelAstEnabled: 'AST 别名分析',
       hintAstEnabled: '用 acorn 解析 JS，跟踪 require/import 与 cp.exec 等本地别名，把真正调用点报出来；缺少 acorn 或解析失败时自动回退正则。',
       labelAstLevel: 'AST 命中等级',
+      labelOsvEnabled: '已知漏洞查询（OSV）',
+      trustSection: '官方包信任（内容哈希）',
+      labelTrustOfficial: '视为官方的名称 / 作用域',
+      hintTrustOfficial: '每行一个：精确包名，或 @scope / @scope/* 作用域。只有列在这里的包才做内容哈希校验；留空表示不做任何“按名字信任”。',
+      labelTrustPins: '期望内容哈希',
+      hintTrustPins: '每行一个 name@version=sha256（64 位十六进制）。首次通过门禁的官方包会自动记录哈希，这里用于覆盖或手工固定。',
+      hintOsvEnabled: '安装前用 api.osv.dev 查询该包版本是否有已知漏洞；需要网络，查询失败按“未知”处理，不会当成干净。默认关闭。',
       hintAstLevel: '低 → 提示级；中 → 可疑（默认）。高 → 高危，安装前会询问是否继续。',
       optAstLow: '低（提示）',
       optAstMedium: '中（可疑）',
@@ -224,6 +231,10 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       labelDestructiveSystem: '不可逆的系统破坏',
       hintDestructiveSystem: '格盘/分区、注册表删除与导入、卷影副本/备份、事件日志、关闭 Defender/防火墙/UAC、根证书、系统账户与权限文件等；默认拒绝',
       labelDestructiveData: '大规模数据破坏',
+      labelCanaryBait: '蜜罐诱饵检测',
+      hintCanaryBait: '在状态目录埋入带随机令牌的凭据诱饵，并检查出站请求是否携带该令牌；命中即确认为凭证外泄。只覆盖 fetch，默认关闭。',
+      labelRuntimeGuard: '进程内运行时守卫',
+      hintRuntimeGuard: '直接在宿主进程里拦截插件代码删除/覆盖凭证或系统路径、以及下载即执行的命令。默认关闭；ESM 命名导入、worker_threads 与原生模块不在覆盖范围内。',
       hintDestructiveData: 'SQL 删库删表、Redis/Mongo 清库、Docker/K8s/云资源删除、Terraform destroy、Git 历史销毁、批量杀进程/关机等；默认询问',
       labelQuarantineEnabled: '可逆化删除',
       labelTtl: '保留天数',
@@ -323,6 +334,7 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       promptTitle: '守夜人请求确认',
       promptWhat: '将要执行',
       promptCommandLabel: '命令',
+      promptEvidenceLabel: '命中代码',
       promptAdvice: '建议',
       promptAdviceRisky: '建议拒绝。确认命令与目标确实是你本意后，再选择「允许一次」。',
       promptAdviceGeneric: '建议先确认来源与影响；不确定时选「拒绝」，确认后可选「允许一次」。',
@@ -439,6 +451,13 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       labelAstEnabled: 'AST alias analysis',
       hintAstEnabled: 'Parse JS with acorn, follow local aliases (require/import, cp.exec) and report the real call sites; falls back to regex if acorn is missing or parsing fails.',
       labelAstLevel: 'AST hit level',
+      labelOsvEnabled: 'Known-vulnerability lookup (OSV)',
+      trustSection: 'Official package trust (content hash)',
+      labelTrustOfficial: 'Names / scopes treated as official',
+      hintTrustOfficial: 'One per line: an exact package name, or a @scope / @scope/* scope. Only these packages are content-hash verified; empty means no name-based trust at all.',
+      labelTrustPins: 'Expected content hashes',
+      hintTrustPins: 'One per line: name@version=sha256 (64 hex chars). An official package that passes the gate is pinned automatically; use this to override or pre-set a hash.',
+      hintOsvEnabled: 'Queries api.osv.dev for known vulnerabilities before install. Needs network; a failed lookup counts as unknown, never as clean. Off by default.',
       hintAstLevel: 'Low → notice; Medium → review (default); High → blocker, the install gate asks before continuing.',
       optAstLow: 'Low (notice)',
       optAstMedium: 'Medium (review)',
@@ -555,6 +574,10 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       labelDestructiveSystem: 'Irreversible system destruction',
       hintDestructiveSystem: 'Disk/partition format, registry delete/import, shadow copies and backups, event logs, disabling Defender/firewall/UAC, root certificates, system accounts and permission files; denied by default',
       labelDestructiveData: 'Large-scale data destruction',
+      labelCanaryBait: 'Honeypot canary',
+      hintCanaryBait: 'Plants a credential-shaped bait file with a random token and watches outbound fetch requests for it; a match confirms exfiltration. fetch only, off by default.',
+      labelRuntimeGuard: 'In-process runtime guard',
+      hintRuntimeGuard: 'Blocks plugin code that deletes/overwrites credential or system paths inside the host process, and download-and-execute commands. Off by default; ESM named imports, worker_threads and native modules are out of reach.',
       hintDestructiveData: 'SQL DROP/TRUNCATE, Redis/Mongo flush, Docker/K8s/cloud resource deletion, terraform destroy, git history rewrite, mass process kills and shutdown; asked by default',
       labelQuarantineEnabled: 'Reversible deletion',
       labelTtl: 'Retention days',
@@ -654,6 +677,7 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       promptTitle: 'Vigil asks for confirmation',
       promptWhat: 'About to run',
       promptCommandLabel: 'Command',
+      promptEvidenceLabel: 'Flagged code',
       promptAdvice: 'Advice',
       promptAdviceRisky: 'Recommend denying. Choose "Allow once" only after confirming the command and target are yours.',
       promptAdviceGeneric: 'Confirm the source and impact first; deny if unsure, allow once only after checking.',
@@ -799,6 +823,8 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
           { path: 'sentinel.dshPluginInstall', type: 'select', labelKey: 'labelPluginInstall', options: DECISION_OPTIONS },
           { path: 'sentinel.destructiveSystem', type: 'select', labelKey: 'labelDestructiveSystem', hintKey: 'hintDestructiveSystem', options: DECISION_OPTIONS },
           { path: 'sentinel.destructiveData', type: 'select', labelKey: 'labelDestructiveData', hintKey: 'hintDestructiveData', options: DECISION_OPTIONS },
+          { path: 'sentinel.runtimeGuard', type: 'switch', labelKey: 'labelRuntimeGuard', hintKey: 'hintRuntimeGuard' },
+          { path: 'sentinel.canary', type: 'switch', labelKey: 'labelCanaryBait', hintKey: 'hintCanaryBait' },
         ],
       },
       {
@@ -823,6 +849,14 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
         fields: [
           { path: 'scan.ast.enabled', type: 'switch', labelKey: 'labelAstEnabled', hintKey: 'hintAstEnabled' },
           { path: 'scan.ast.level', type: 'select', labelKey: 'labelAstLevel', hintKey: 'hintAstLevel', options: [{ value: 'low', labelKey: 'optAstLow' }, { value: 'medium', labelKey: 'optAstMedium' }, { value: 'high', labelKey: 'optAstHigh' }] },
+          { path: 'scan.osv.enabled', type: 'switch', labelKey: 'labelOsvEnabled', hintKey: 'hintOsvEnabled' },
+        ],
+      },
+      {
+        titleKey: 'trustSection',
+        fields: [
+          { path: 'trust.officialPackages', type: 'list', labelKey: 'labelTrustOfficial', hintKey: 'hintTrustOfficial' },
+          { path: 'trust.pins', type: 'list', labelKey: 'labelTrustPins', hintKey: 'hintTrustPins' },
         ],
       },
       {
@@ -975,6 +1009,11 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
         const allowed = field.options.map(option => option.value)
         return allowed.includes(raw) ? raw : allowed[0]
       }
+      // A list field edits one entry per line; the draft always holds a string.
+      if (field.type === 'list') {
+        if (Array.isArray(raw)) return raw.map(item => String(item)).join('\n')
+        return typeof raw === 'string' ? raw : ''
+      }
       return typeof raw === 'string' ? raw : ''
     }
 
@@ -998,6 +1037,13 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
         }
         if (field.type === 'select' && !field.options.some(option => option.value === value)) value = field.options[0].value
         if (field.type === 'switch' && field.values) value = value === true ? field.values.on : field.values.off
+        if (field.type === 'list') {
+          value = String(typeof value === 'string' ? value : '')
+            .split('\n')
+            .map(item => item.trim())
+            .filter(item => item !== '')
+            .slice(0, 200)
+        }
         patch = setPath(patch, field.path, value)
       }
       return patch
@@ -1344,6 +1390,16 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
           label,
           disabled,
           onChange: next => onChange(field.path, next),
+        })
+      } else if (field.type === 'list') {
+        control = h('textarea', {
+          className: 'dsh-vigil-input dsh-vigil-input-wide dsh-vigil-textarea',
+          rows: 3,
+          value: typeof value === 'string' ? value : '',
+          spellCheck: false,
+          'aria-label': label,
+          disabled,
+          onChange: event => onChange(field.path, event.target.value),
         })
       } else if (field.type === 'number') {
         control = h('span', { className: 'dsh-vigil-number' },
@@ -1869,6 +1925,52 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
     }
 
     /**
+     * Language-aware highlighter for the evidence preview: strings, keys,
+     * numbers, literals and comments. It reuses the shell token classes, so one
+     * palette covers both the command block and flagged source lines.
+     * @param {string} text
+     * @param {string} language
+     * @returns {Array<{ cls: string, value: string }>}
+     */
+    function highlightCode(text, language) {
+      const source = String(text ?? '')
+      const lang = String(language ?? '').toLowerCase()
+      if (lang !== 'json' && lang !== 'yaml' && lang !== 'js') {
+        return source === '' ? [] : [{ cls: '', value: source }]
+      }
+      const pattern = lang === 'yaml'
+        ? /#[^\n]*|"(?:\\.|[^"\\])*"|'[^'\n]*'|^[ \t-]*[A-Za-z_$][\w.$-]*(?=\s*:)|-?\b\d+(?:\.\d+)?\b|\b(?:true|false|null)\b/gm
+        : /\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?\b\d+(?:\.\d+)?\b|\b(?:true|false|null|undefined)\b/g
+      const tokens = []
+      let last = 0
+      let match
+      while ((match = pattern.exec(source)) !== null) {
+        if (match.index > last) tokens.push({ cls: '', value: source.slice(last, match.index) })
+        const value = match[0]
+        const after = source.slice(match.index + value.length)
+        let cls = ''
+        if (value.startsWith('//') || value.startsWith('#')) cls = 'comment'
+        else if (value.startsWith('"') || value.startsWith("'")) cls = /^\s*:/.test(after) ? 'kw' : 'str'
+        else if (/^-?\d/.test(value) || /^-?\s*\d/.test(value)) cls = 'num'
+        else if (/^(?:true|false|null|undefined)$/.test(value.trim())) cls = 'kw'
+        else if (/^(-?\s*)?[A-Za-z_$]/.test(value.trim()) && /^\s*:/.test(after)) cls = 'kw'
+        tokens.push({ cls, value })
+        last = match.index + value.length
+      }
+      if (last < source.length) tokens.push({ cls: '', value: source.slice(last) })
+      return tokens
+    }
+
+    /** Highlighted source block for scan findings; same frame as the command block. */
+    function CodeBlock(props) {
+      const tokens = highlightCode(props.text, props.language)
+      return h('pre', { className: 'dsh-vigil-dialog-command' },
+        tokens.map((token, index) => token.cls === ''
+          ? token.value
+          : h('span', { key: `${index}-${token.cls}`, className: `dsh-vigil-tok-${token.cls}` }, token.value)))
+    }
+
+    /**
      * Shared modal focus contract: remember/restore focus, focus the safest
      * control, trap Tab and close on Escape. Used by every dsh-vigil dialog so
      * a feed re-render cannot steal focus back to the close button.
@@ -2020,11 +2122,15 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
         h('p', { className: 'dsh-vigil-dialog-description' },
           `${active.tool ?? ''}${active.tool ? ' ' : ''}${t('promptWhat')}`),
         h('div', { className: 'dsh-vigil-dialog-body' },
-          active.command
+          active.code && typeof active.code.text === 'string' && active.code.text !== ''
             ? h('div', { className: 'dsh-vigil-dialog-section' },
-              h('div', { className: 'dsh-vigil-dialog-label' }, t('promptCommandLabel')),
-              h(CommandCode, { command: active.command }))
-            : null,
+              h('div', { className: 'dsh-vigil-dialog-label' }, t('promptEvidenceLabel')),
+              h(CodeBlock, { text: active.code.text, language: active.code.language }))
+            : active.command
+              ? h('div', { className: 'dsh-vigil-dialog-section' },
+                h('div', { className: 'dsh-vigil-dialog-label' }, t('promptCommandLabel')),
+                h(CommandCode, { command: active.command }))
+              : null,
           h('div', { className: 'dsh-vigil-dialog-section' },
             h('div', { className: 'dsh-vigil-dialog-label' }, t('promptReason')),
             h('div', { className: 'dsh-vigil-dialog-text dsh-vigil-dialog-text-strong' }, cleanReason(active.reason)),
@@ -2042,26 +2148,31 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
               active.sage?.threatId ? `${t('dockSageBy')} ${active.sage.threatId}` : null,
               active.session ? t('promptSource').replace('{session}', String(active.session).slice(0, 16)) : null,
               pending.length > 1 ? t('promptMore').replace('{count}', String(pending.length - 1)) : null,
-              allowSessionConfirm ? t('promptAllowHint') : null,
-              t('promptSessionHint'),
+              active.session && allowSessionConfirm ? t('promptAllowHint') : null,
+              active.session ? t('promptSessionHint') : null,
               failed ? t('promptFailed') : null,
             ].filter(Boolean).join(' · ')),
         ),
         h('div', { className: 'dsh-vigil-dialog-footer' },
           h('button', { type: 'button', className: 'dsh-vigil-dialog-button', disabled: busy, onClick: () => send('allow-once') }, t('promptAllowOnce')),
-          h('button', {
-            type: 'button',
-            className: allowSessionConfirm ? 'dsh-vigil-dialog-button dsh-vigil-dialog-button-armed' : 'dsh-vigil-dialog-button',
-            disabled: busy,
-            onClick: () => {
-              if (allowSessionConfirm) {
-                setAllowSessionConfirm(false)
-                send('allow')
-              } else {
-                setAllowSessionConfirm(true)
-              }
-            },
-          }, allowSessionConfirm ? t('promptAllowConfirm') : t('promptAllow')),
+          // "Allow (this session)" remembers a `<tool>|<rules>` signature per
+          // session. An install raised by the plugin page has no session, so the
+          // button would promise a memory that cannot be kept: hide it.
+          active.session
+            ? h('button', {
+              type: 'button',
+              className: allowSessionConfirm ? 'dsh-vigil-dialog-button dsh-vigil-dialog-button-armed' : 'dsh-vigil-dialog-button',
+              disabled: busy,
+              onClick: () => {
+                if (allowSessionConfirm) {
+                  setAllowSessionConfirm(false)
+                  send('allow')
+                } else {
+                  setAllowSessionConfirm(true)
+                }
+              },
+            }, allowSessionConfirm ? t('promptAllowConfirm') : t('promptAllow'))
+            : null,
 
           h('button', {
             type: 'button',
@@ -2549,7 +2660,12 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
                   className: 'dsh-vigil-inline-command',
                   title: activePending.command,
                 }, formatCommand(formatApprovalCommand(String(activePending.command))).split('\n').join(' '))
-                : null,
+                : activePending.code && activePending.code.text
+                  ? h('code', {
+                    className: 'dsh-vigil-inline-command',
+                    title: String(activePending.code.text),
+                  }, String(activePending.code.text).split('\n').filter(line => line.trim() !== '').slice(0, 2).join(' '))
+                  : null,
               h(Artwork, { className: 'dsh-vigil-inline-watermark', name: inlineArt })),
             h('div', { className: 'dsh-vigil-inline-actions' },
               h('button', {
@@ -2558,20 +2674,24 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
                 disabled: pendingBusy,
                 onClick: () => answerPending('allow-once'),
               }, t('promptAllowOnce')),
-              h('button', {
-                type: 'button',
-                className: inlineAlwaysConfirm ? 'dsh-vigil-button dsh-vigil-button-armed' : 'dsh-vigil-button',
-                disabled: pendingBusy,
-                title: t('promptAllowHint'),
-                onClick: () => {
-                  if (inlineAlwaysConfirm) {
-                    setInlineAlwaysConfirm(false)
-                    answerPending('allow')
-                  } else {
-                    setInlineAlwaysConfirm(true)
-                  }
-                },
-              }, inlineAlwaysConfirm ? t('promptAllowConfirm') : t('inlineAlwaysAllow'))),
+              // Same rule as the dialog: without a session there is nothing to
+              // remember, so no always-allow affordance.
+              activePending.session
+                ? h('button', {
+                  type: 'button',
+                  className: inlineAlwaysConfirm ? 'dsh-vigil-button dsh-vigil-button-armed' : 'dsh-vigil-button',
+                  disabled: pendingBusy,
+                  title: t('promptAllowHint'),
+                  onClick: () => {
+                    if (inlineAlwaysConfirm) {
+                      setInlineAlwaysConfirm(false)
+                      answerPending('allow')
+                    } else {
+                      setInlineAlwaysConfirm(true)
+                    }
+                  },
+                }, inlineAlwaysConfirm ? t('promptAllowConfirm') : t('inlineAlwaysAllow'))
+                : null),
             h('button', {
               type: 'button',
               className: 'dsh-vigil-inline-countdown dsh-vigil-inline-deny',
@@ -4226,7 +4346,7 @@ h('section', { className: 'dsh-vigil-group dsh-vigil-help', 'data-open': openGro
 .dsh-vigil-badge[data-kind='ask'] { color: var(--dsw-alias-state-warn-primary); background: var(--dsw-alias-bg-layer-2); }
 .dsh-vigil-badge[data-kind='would'] { color: var(--dsw-alias-state-warn-primary); background: var(--dsw-alias-bg-layer-2); }
 .dsh-vigil-badge[data-kind='allow'] { color: var(--dsw-alias-state-success-primary); background: var(--dsw-alias-bg-layer-2); }
-/* Dialog illustrations: served by the authenticated artwork route. */
+/* Dialog illustrations: inlined data URIs (no Host route). */
 .dsh-vigil-dialog-illustration { display: flex; justify-content: center; margin: -4px 0 -8px; }
 .dsh-vigil-dialog-illustration img { width: 116px; height: 116px; object-fit: contain; filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.22)); }
 .dsh-vigil-audit-illustration { display: flex; justify-content: center; margin: 0 0 10px; }

@@ -25,13 +25,13 @@
  */
 
 /** Characters that may legally precede a regex literal (expression position). */
-const REGEX_LEAD_PUNCT = new Set('([{,;:=!&|?+-*%^~<>');
+const REGEX_LEAD_PUNCT = new Set('([{,;:=!&|?+-*%^~<>')
 
 /** Keywords after which a slash starts a regex literal rather than division. */
-const REGEX_LEAD_KEYWORDS = /^(?:return|typeof|instanceof|in|of|case|delete|void|throw|new|yield|await|else|do)$/;
+const REGEX_LEAD_KEYWORDS = /^(?:return|typeof|instanceof|in|of|case|delete|void|throw|new|yield|await|else|do)$/
 
 /** Default sanity cap; scanning itself caps files well below this. */
-const DEFAULT_MAX_CHARS = 2 * 1024 * 1024;
+const DEFAULT_MAX_CHARS = 2 * 1024 * 1024
 
 /**
  * Split a masked string into lines without a trailing `\r`, so line numbers
@@ -41,7 +41,7 @@ const DEFAULT_MAX_CHARS = 2 * 1024 * 1024;
  * @returns {string[]}
  */
 function splitLines(text) {
-  return text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
+  return text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line))
 }
 
 /**
@@ -51,12 +51,12 @@ function splitLines(text) {
  * @returns {number[]} `lineStarts[0] === 0`; index = 1-based line - 1.
  */
 export function lineStartsOf(source) {
-  const text = typeof source === 'string' ? source : '';
-  const starts = [0];
+  const text = typeof source === 'string' ? source : ''
+  const starts = [0]
   for (let i = 0; i < text.length; i += 1) {
-    if (text[i] === '\n') starts.push(i + 1);
+    if (text[i] === '\n') starts.push(i + 1)
   }
-  return starts;
+  return starts
 }
 
 /**
@@ -67,16 +67,16 @@ export function lineStartsOf(source) {
  * @returns {number}
  */
 export function lineNumberAt(lineStarts, index) {
-  if (!Array.isArray(lineStarts) || lineStarts.length === 0) return 1;
-  const offset = Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0;
-  let low = 0;
-  let high = lineStarts.length - 1;
+  if (!Array.isArray(lineStarts) || lineStarts.length === 0) return 1
+  const offset = Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0
+  let low = 0
+  let high = lineStarts.length - 1
   while (low < high) {
-    const mid = (low + high + 1) >> 1;
-    if (lineStarts[mid] <= offset) low = mid;
-    else high = mid - 1;
+    const mid = (low + high + 1) >> 1
+    if (lineStarts[mid] <= offset) low = mid
+    else high = mid - 1
   }
-  return low + 1;
+  return low + 1
 }
 
 /**
@@ -90,15 +90,15 @@ export function lineNumberAt(lineStarts, index) {
  * @returns {boolean}
  */
 function canStartRegex(chars, index, source) {
-  let i = index - 1;
-  while (i >= 0 && /\s/.test(chars[i])) i -= 1;
-  if (i < 0) return true;
-  const ch = chars[i];
-  if (REGEX_LEAD_PUNCT.has(ch)) return true;
-  if (!/[\w$]/.test(ch)) return false;
-  let start = i;
-  while (start >= 0 && /[\w$]/.test(chars[start])) start -= 1;
-  return REGEX_LEAD_KEYWORDS.test(source.slice(start + 1, i + 1));
+  let i = index - 1
+  while (i >= 0 && /\s/.test(chars[i])) i -= 1
+  if (i < 0) return true
+  const ch = chars[i]
+  if (REGEX_LEAD_PUNCT.has(ch)) return true
+  if (!/[\w$]/.test(ch)) return false
+  let start = i
+  while (start >= 0 && /[\w$]/.test(chars[start])) start -= 1
+  return REGEX_LEAD_KEYWORDS.test(source.slice(start + 1, i + 1))
 }
 
 /**
@@ -119,179 +119,179 @@ function canStartRegex(chars, index, source) {
  * }}
  */
 export function maskSource(source, options = {}) {
-  const text = typeof source === 'string' ? source : '';
+  const text = typeof source === 'string' ? source : ''
   const requested = Number.isFinite(options.maxChars) && options.maxChars > 0
     ? Math.floor(options.maxChars)
-    : DEFAULT_MAX_CHARS;
-  const end = Math.min(text.length, requested);
+    : DEFAULT_MAX_CHARS
+  const end = Math.min(text.length, requested)
 
-  let maskedCode;
-  let maskedLiterals;
+  let maskedCode
+  let maskedLiterals
   try {
     // Working on arrays of UTF-16 code units keeps index offsets (and therefore
     // line numbers) identical to the source.
-    const codeChars = text.split('');
-    const literalChars = text.split('');
+    const codeChars = text.split('')
+    const literalChars = text.split('')
 
     /** Blank one character in the code mask only (never a newline). */
     const blankCode = (i) => {
-      if (i >= end || i < 0) return;
-      if (text[i] !== '\n' && text[i] !== '\r') codeChars[i] = ' ';
-    };
+      if (i >= end || i < 0) return
+      if (text[i] !== '\n' && text[i] !== '\r') codeChars[i] = ' '
+    }
     /** Blank one character in both masks (never a newline). */
     const blankBoth = (i) => {
-      if (i >= end || i < 0) return;
-      if (text[i] === '\n' || text[i] === '\r') return;
-      codeChars[i] = ' ';
-      literalChars[i] = ' ';
-    };
+      if (i >= end || i < 0) return
+      if (text[i] === '\n' || text[i] === '\r') return
+      codeChars[i] = ' '
+      literalChars[i] = ' '
+    }
 
     /** 'code' | 'line' | 'block' | 'string' | 'template' | 'regex' */
-    let mode = 'code';
-    let quote = '';
+    let mode = 'code'
+    let quote = ''
     /** @type {{ depth: number, inExpr: boolean }[]} */
-    const templates = [];
-    let inRegexClass = false;
+    const templates = []
+    let inRegexClass = false
 
     for (let i = 0; i < end; i += 1) {
-      const ch = text[i];
+      const ch = text[i]
 
       if (mode === 'code') {
         if (ch === '/' && text[i + 1] === '/') {
-          blankBoth(i);
-          blankBoth(i + 1);
-          mode = 'line';
-          i += 1;
-          continue;
+          blankBoth(i)
+          blankBoth(i + 1)
+          mode = 'line'
+          i += 1
+          continue
         }
         if (ch === '/' && text[i + 1] === '*') {
-          blankBoth(i);
-          blankBoth(i + 1);
-          mode = 'block';
-          i += 1;
-          continue;
+          blankBoth(i)
+          blankBoth(i + 1)
+          mode = 'block'
+          i += 1
+          continue
         }
         if (ch === "'" || ch === '"') {
-          mode = 'string';
-          quote = ch;
-          continue;
+          mode = 'string'
+          quote = ch
+          continue
         }
         if (ch === '`') {
-          templates.push({ depth: 0, inExpr: false });
-          mode = 'template';
-          continue;
+          templates.push({ depth: 0, inExpr: false })
+          mode = 'template'
+          continue
         }
         if (ch === '/' && canStartRegex(codeChars, i, text)) {
-          mode = 'regex';
-          inRegexClass = false;
-          continue;
+          mode = 'regex'
+          inRegexClass = false
+          continue
         }
-        const top = templates[templates.length - 1];
+        const top = templates[templates.length - 1]
         if (top && top.inExpr) {
           if (ch === '{') {
-            top.depth += 1;
-            continue;
+            top.depth += 1
+            continue
           }
           if (ch === '}') {
             if (top.depth === 0) {
-              top.inExpr = false;
-              mode = 'template';
+              top.inExpr = false
+              mode = 'template'
             } else {
-              top.depth -= 1;
+              top.depth -= 1
             }
-            continue;
+            continue
           }
         }
-        continue;
+        continue
       }
 
       if (mode === 'line') {
-        if (ch === '\n') mode = 'code';
-        else blankBoth(i);
-        continue;
+        if (ch === '\n') mode = 'code'
+        else blankBoth(i)
+        continue
       }
 
       if (mode === 'block') {
         if (ch === '*' && text[i + 1] === '/') {
-          blankBoth(i);
-          blankBoth(i + 1);
-          mode = 'code';
-          i += 1;
+          blankBoth(i)
+          blankBoth(i + 1)
+          mode = 'code'
+          i += 1
         } else {
-          blankBoth(i);
+          blankBoth(i)
         }
-        continue;
+        continue
       }
 
       if (mode === 'string') {
         if (ch === '\\') {
-          blankCode(i);
-          blankCode(i + 1);
-          i += 1;
+          blankCode(i)
+          blankCode(i + 1)
+          i += 1
         } else if (ch === quote) {
-          mode = 'code';
+          mode = 'code'
         } else if (ch === '\n') {
           // Unterminated string: recover on the next line instead of failing.
-          mode = 'code';
+          mode = 'code'
         } else {
-          blankCode(i);
+          blankCode(i)
         }
-        continue;
+        continue
       }
 
       if (mode === 'template') {
         if (ch === '\\') {
-          blankCode(i);
-          blankCode(i + 1);
-          i += 1;
+          blankCode(i)
+          blankCode(i + 1)
+          i += 1
         } else if (ch === '`') {
-          templates.pop();
-          mode = 'code';
+          templates.pop()
+          mode = 'code'
         } else if (ch === '$' && text[i + 1] === '{') {
-          const top = templates[templates.length - 1];
-          if (top) top.inExpr = true;
+          const top = templates[templates.length - 1]
+          if (top) top.inExpr = true
           // Keep `${` visible in the code mask so structure remains readable.
-          i += 1;
-          mode = 'code';
+          i += 1
+          mode = 'code'
         } else {
-          blankCode(i);
+          blankCode(i)
         }
-        continue;
+        continue
       }
 
       // mode === 'regex'
       if (ch === '\\') {
-        blankBoth(i);
-        blankBoth(i + 1);
-        i += 1;
+        blankBoth(i)
+        blankBoth(i + 1)
+        i += 1
       } else if (ch === '[') {
-        inRegexClass = true;
-        blankBoth(i);
+        inRegexClass = true
+        blankBoth(i)
       } else if (ch === ']') {
-        inRegexClass = false;
-        blankBoth(i);
+        inRegexClass = false
+        blankBoth(i)
       } else if (ch === '/' && !inRegexClass) {
-        mode = 'code';
+        mode = 'code'
         // Flags after the closing slash stay as ordinary code characters.
       } else {
-        blankBoth(i);
+        blankBoth(i)
       }
     }
 
-    maskedCode = codeChars.join('');
-    maskedLiterals = literalChars.join('');
+    maskedCode = codeChars.join('')
+    maskedLiterals = literalChars.join('')
   } catch {
     // The masker must never throw; fall back to unmasked views (rules will be
     // looser but line numbers stay correct).
-    maskedCode = text;
-    maskedLiterals = text;
+    maskedCode = text
+    maskedLiterals = text
   }
 
-  const originalLines = splitLines(text);
-  const codeLines = splitLines(maskedCode);
-  const literalLines = splitLines(maskedLiterals);
-  const lineStarts = lineStartsOf(text);
-  const lineCount = originalLines.length;
+  const originalLines = splitLines(text)
+  const codeLines = splitLines(maskedCode)
+  const literalLines = splitLines(maskedLiterals)
+  const lineStarts = lineStartsOf(text)
+  const lineCount = originalLines.length
 
   return {
     source: text,
@@ -303,5 +303,5 @@ export function maskSource(source, options = {}) {
     sourceLine: (line) => originalLines[line - 1] ?? '',
     codeLine: (line) => codeLines[line - 1] ?? '',
     literalLine: (line) => literalLines[line - 1] ?? '',
-  };
+  }
 }

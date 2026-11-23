@@ -22,13 +22,29 @@
  * @module dsh-vigil/approval
  */
 
-import { nowIso } from './util.js'
+import { DEFAULT_APPROVAL_TIMEOUT_MS, nowIso } from './util.js'
 
 /** Authenticated browser Fetch path for approval answers. */
 export const APPROVAL_ROUTE_PATH = '/api/dsh-vigil/approval'
 
-const DEFAULT_TIMEOUT_MS = 120_000
+const DEFAULT_TIMEOUT_MS = DEFAULT_APPROVAL_TIMEOUT_MS
 const MAX_PENDING = 8
+/** Longest code preview kept on a parked request; the page only renders it. */
+const MAX_CODE_CHARS = 4000
+
+/**
+ * Normalise an optional reviewable code preview: the offending source lines the
+ * page renders with syntax highlighting instead of leaving the finding in prose.
+ * @param {unknown} code
+ * @returns {{ language: string, text: string } | null}
+ */
+function normalizeCode(code) {
+  if (!code || typeof code !== 'object') return null
+  const text = typeof code.text === 'string' ? code.text : ''
+  if (text.trim() === '') return null
+  const language = typeof code.language === 'string' ? code.language.trim().toLowerCase().slice(0, 16) : ''
+  return { language, text: text.slice(0, MAX_CODE_CHARS) }
+}
 
 /**
  * @param {string|null|undefined} tool
@@ -62,8 +78,8 @@ export function createApprovalQueue(options = {}) {
   let disposed = false
 
   /**
-   * @param {{ tool: string, command?: string|null, reason?: string, ruleIds?: string[], sage?: any, sessionId?: string|null }} input
-   * @returns {{ id: string, tool: string, command: string|null, reason: string, ruleIds: string[], sage: any, sessionId: string|null, createdAt: string, expiresAt: string }}
+   * @param {{ tool: string, command?: string|null, code?: unknown, reason?: string, ruleIds?: string[], sage?: any, sessionId?: string|null }} input
+   * @returns {{ id: string, tool: string, command: string|null, code: { language: string, text: string } | null, reason: string, ruleIds: string[], sage: any, sessionId: string|null, createdAt: string, expiresAt: string }}
    */
   function prepare(input) {
     const id = `ap_${Date.now().toString(36)}_${(sequence += 1).toString(36)}`
@@ -71,6 +87,7 @@ export function createApprovalQueue(options = {}) {
       id,
       tool: String(input.tool ?? ''),
       command: typeof input.command === 'string' && input.command.trim() !== '' ? input.command : null,
+      code: normalizeCode(input.code),
       reason: typeof input.reason === 'string' ? input.reason : '',
       ruleIds: Array.isArray(input.ruleIds) ? [...new Set(input.ruleIds)] : [],
       sage: input.sage ?? null,
@@ -249,6 +266,7 @@ export function createApprovalQueue(options = {}) {
       id: entry.id,
       tool: entry.tool,
       command: entry.command,
+      code: entry.code,
       reason: entry.reason,
       ruleIds: entry.ruleIds,
       sage: entry.sage,

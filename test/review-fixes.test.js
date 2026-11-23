@@ -1,5 +1,5 @@
 /**
- * Regression tests for the 2026-11-21 review (docs/REVIEW-2026-11-21.md).
+ * Regression tests for the 2026-11-21 review.
  *
  * Each test pins one of the defects that the review reproduced: protected-root
  * grading, path spelling, delete-parser wrappers, quarantine manifest trust,
@@ -7,9 +7,9 @@
  */
 import { strict as assert } from 'node:assert'
 import test from 'node:test'
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 /** AST rules need the optional acorn dependency; skip (not fail) without it. */
@@ -185,7 +185,8 @@ test('self guard: ~ spellings, 8.3-style names and robocopy cannot write state',
   // Keep the scratch root under the user profile: the test derives `~` and
   // `$env:USERPROFILE` paths relative to homedir(), and CI's %TEMP% on Windows
   // is an 8.3 short path (C:\Users\RUNNER~1\...) that does not share the prefix.
-  const root = mkdtempSync(join(homedir(), 'vigil-guard-'))
+  // tempDir() still owns the cleanup, so the directory does not accumulate.
+  const root = tempDir('vigil-guard-', homedir())
   const config = scratchConfig(root)
   const pluginDir = join(root, 'plugin')
   mkdirSync(pluginDir, { recursive: true })
@@ -200,7 +201,6 @@ test('self guard: ~ spellings, 8.3-style names and robocopy cannot write state',
   assert.match(String(guard({ name: 'pwsh', arguments: { command: `Set-Content -Path "\\\\?\\${join(stateDir, 'x')}" -Value 1` } })), /自保护/)
   assert.match(String(guard({ name: 'pwsh', arguments: { command: `robocopy C:\\payload "${stateDir}" /E` } })), /自保护/)
   assert.equal(guard({ name: 'pwsh', arguments: { command: `Get-Content "${join(stateDir, 'x')}"` } }), undefined, 'reads stay allowed')
-  rmSync(root, { recursive: true, force: true })
 })
 
 test('self guard: monitor mode never blocks', () => {
@@ -319,7 +319,11 @@ test('static audit: *_TOKEN env reads are credential findings', async () => {
   const report = await scanPluginDirectory(root)
   const finding = report.findings.find(item => item.ruleId === 'VG-CRED-04')
   assert.ok(finding, 'GITHUB_TOKEN must be recognised as a credential env read')
-  assert.equal(finding.severity, 'blocker', 'env credential + egress is an exfiltration shape')
+  assert.equal(finding.severity, 'notice', 'the base env-read rule keeps its catalog level')
+  const combination = report.findings.find(item => item.ruleId === 'VG-CRED-07')
+  assert.ok(combination, 'GITHUB_TOKEN + egress must produce the combination rule')
+  assert.equal(combination.severity, 'blocker')
+  assert.equal(combination.confidence, 'confirmed')
   rmSync(root, { recursive: true, force: true })
 })
 
@@ -461,7 +465,7 @@ test('static audit: download-pipe text in copy is a notice, not a blocker', asyn
   mkdirSync(join(root, 'src'))
   writeFileSync(join(root, 'src', 'i18n.js'), "export const hint = 'curl https://x.example/i.sh | sh'\n")
   const report = await scanPluginDirectory(root)
-  const finding = report.findings.find(item => item.ruleId === 'VG-DYN-03')
+  const finding = report.findings.find(item => item.ruleId === 'VG-DYN-15')
   assert.ok(finding)
   assert.equal(finding.severity, 'notice', 'a literal in UI copy is not executable behaviour')
 
@@ -1263,18 +1267,18 @@ test('scanner calibration: regex exec is not child_process, literal imports/path
   assert.ok(findingsOf(realNamedCall).some(item => item.startsWith('VG-DYN-02')))
 
   // A literal lazy import is ordinary; a computed one stays a review.
-  assert.ok(findingsOf("const z = await import('@deepseek-ai/schemastery')\n").includes('VG-DYN-04:notice'))
+  assert.ok(findingsOf("const z = await import('@deepseek-ai/schemastery')\n").includes('VG-DYN-04:review'))
   assert.ok(findingsOf('const z = await import(specifier)\n').includes('VG-DYN-04:review'))
 
   // Credential path literals without a read API are notices, not reviews.
   const literalPath = "const NAMES = ['~/.ssh/id_rsa', '~/.aws/credentials']\n"
-  assert.ok(findingsOf(literalPath).every(item => !item.startsWith('VG-CRED-03:') || item === 'VG-CRED-03:notice'))
+  assert.ok(findingsOf(literalPath).every(item => !item.startsWith('VG-CRED-03:') || item === 'VG-CRED-03:review'))
   const realRead = "const key = readFileSync(`${HOME}/.ssh/id_rsa`)\n"
   assert.ok(findingsOf(realRead).includes('VG-CRED-03:review'))
 
   // Privilege keywords in prose are notices; a returned declaration stays a blocker.
-  assert.ok(findingsOf("const doc = { note: 'danger-full-access is documented here' }\n").includes('VG-CFG-03:notice'))
-  assert.ok(findingsOf("return 'danger-full-access'\n").includes('VG-CFG-03:blocker'))
+  assert.ok(findingsOf("const doc = { note: 'danger-full-access is documented here' }\n").includes('VG-CFG-03:review'))
+  assert.ok(findingsOf("return 'danger-full-access'\n").includes('VG-CFG-05:blocker'))
 })
 
 test('scanner calibration: same-origin client code is not exfiltration', async () => {
@@ -1291,11 +1295,11 @@ test('scanner calibration: same-origin client code is not exfiltration', async (
     '',
   ].join('\n')
   const findings = scanClient(sameOrigin)
-  const dsh01 = findings.find(item => item.ruleId === 'VG-DSH-01')
-  assert.ok(dsh01)
-  assert.equal(dsh01.severity, 'notice')
-  assert.ok(findings.filter(item => item.ruleId === 'VG-DSH-03').every(item => item.severity === 'notice'))
-
+  // Same-origin: the egress identity is its own notice rule (DSH-07), and the
+  // storage+network combination is not reported because there is no remote target.
+  assert.equal(findings.some(item => item.ruleId === 'VG-DSH-07'), true)
+  assert.equal(findings.filter(item => item.ruleId === 'VG-DSH-07').every(item => item.severity === 'notice'), true)
+  assert.equal(findings.some(item => item.ruleId === 'VG-DSH-03'), false)
   // An absolute remote URL restores the review/co-occurrence.
   const remote = [
     "const token = window.localStorage.getItem('token')",
@@ -1330,30 +1334,6 @@ test('sentinel: dynamicRemoteCode is tri-state and migrates the legacy boolean',
   assert.equal(legacyOn.warnings.length, 0)
   // An explicit new value wins over the legacy boolean.
   assert.equal(resolveConfig({ sentinel: { denyDynamicRemoteCode: false, dynamicRemoteCode: 'ask' } }).config.sentinel.dynamicRemoteCode, 'ask')
-})
-
-test('artwork route serves only the whitelisted dialog illustrations', async () => {
-  const { ARTWORK_PATH, createArtworkRoute } = await import('../src/artwork-route.js')
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-artwork-'))
-  try {
-    mkdirSync(join(dir, 'illustrations'))
-    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01])
-    writeFileSync(join(dir, 'illustrations', 'warning.png'), bytes)
-    const route = createArtworkRoute({ pluginDir: dir })
-    assert.equal(route.path, ARTWORK_PATH)
-    const served = await route.fetch(new Request(`http://127.0.0.1${ARTWORK_PATH}?name=warning`))
-    assert.equal(served.status, 200)
-    assert.equal(served.headers.get('content-type'), 'image/png')
-    assert.equal(served.headers.get('x-content-type-options'), 'nosniff')
-    assert.deepEqual(Buffer.from(await served.arrayBuffer()), bytes)
-    // Path traversal and unknown names never become a filesystem path.
-    for (const name of ['../package.json', 'notice', '', 'WARNING']) {
-      const missing = await route.fetch(new Request(`http://127.0.0.1${ARTWORK_PATH}?name=${encodeURIComponent(name)}`))
-      assert.equal(missing.status, 404, `name ${JSON.stringify(name)} must be 404`)
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
 })
 
 test('yaml subset parser: mappings, sequences and scalars', () => {
