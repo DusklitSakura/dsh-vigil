@@ -33,7 +33,7 @@ import { createSageActionRoute } from './sage-action-route.js'
 import { createApprovalQueue, createApprovalRoute } from './approval.js'
 import { createQuarantineRoute } from './quarantine-route.js'
 import { createInstallScanRoute } from './install-scan-route.js'
-import { createUpdateCheckRoute } from './update-check.js'
+
 import { applyRulesUpdate, checkRulesUpdate, createRulesUpdateRoute } from './rules/update.js'
 import { createArtworkRoute } from './artwork-route.js'
 import { createAlertWindowRoute } from './alert-route.js'
@@ -398,7 +398,6 @@ export async function apply(ctx, config) {
     '对话内审批路由',
     '隔离区路由',
     '手动插件扫描路由',
-    '插件更新检查路由',
     '规则库更新路由',
     '插图资源路由',
     '审批提醒路由',
@@ -899,6 +898,7 @@ export async function apply(ctx, config) {
           limit: 300,
           approval: approvalQueue,
           installWatcher,
+          version,
         }), '审计数据路由'),
         registerRoute(createAuditClearRoute({ getRuntime: () => runtime }), '审计清理路由'),
         registerRoute(createSageActionRoute({
@@ -916,12 +916,6 @@ export async function apply(ctx, config) {
         run: runRulesUpdate,
         logger,
       }), '规则库更新路由'),
-      registerRoute(createUpdateCheckRoute({
-          pluginDir: PLUGIN_DIR,
-          currentVersion: version,
-          getPluginManager: () => (typeof ctx.get === 'function' ? ctx.get('pluginManager') : undefined),
-          logger,
-        }), '插件更新检查路由'),
       registerRoute(createArtworkRoute({ pluginDir: PLUGIN_DIR }), '插图资源路由'),
       registerRoute(createAlertWindowRoute(), '审批提醒路由'),
       ]

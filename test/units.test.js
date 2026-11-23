@@ -23,15 +23,6 @@ import { createApprovalQueue, createApprovalRoute } from '../src/approval.js'
 import { createQuarantine } from '../src/delete/quarantine.js'
 import { buildProtectedRoots, classifyPath, createDeletePolicy } from '../src/delete/policy.js'
 import { createSelfGuard, inspectSelfProtection } from '../src/sentinel/guard.js'
-import {
-  compareVersions as compareUpdateVersions,
-  createUpdateCheckRoute,
-  normalizeGitRemote,
-  parseBundleSource,
-  parseSemverTag,
-  parseTagRefs,
-  pickLatestTag,
-} from '../src/update-check.js'
 import { inspectToolCall } from '../src/sentinel/rules.js'
 import { configFingerprint, isVolatileRef, snapshotConfig } from '../src/live-config.js'
 import { Config as PluginConfig, SCHEMA_AVAILABLE } from '../src/config-schema.js'
@@ -1777,63 +1768,4 @@ test('integrity: an Ed25519 signature over the baseline is verified when configu
   const second = testConfig({ integrity: { signatureEnabled: true, publicKeyPem, signatureFile: 'baseline.sig' } }, first.root)
   const secondMonitor = createIntegrity(second.config, { pluginDir })
   assert.equal(secondMonitor.state.signature.state, 'verified')
-})
-
-
-test('update check: semver tags, remotes, peeled commits and install kind', async () => {
-  assert.equal(parseSemverTag('v1.2.3')?.version, '1.2.3')
-  assert.equal(parseSemverTag('1.2.3')?.version, '1.2.3')
-  assert.equal(parseSemverTag('v1.2.3-beta.1'), null)
-  assert.equal(parseSemverTag('release-1.2.3'), null)
-  assert.ok(compareUpdateVersions('1.2.3', '1.2.2') > 0)
-  assert.ok(compareUpdateVersions('0.9.9', '1.0.0') < 0)
-  assert.equal(compareUpdateVersions('1.0.0', '1.0.0'), 0)
-
-  assert.deepEqual(normalizeGitRemote('https://github.com/me/dsh-vigil.git'), {
-    display: 'github.com/me/dsh-vigil.git',
-    specBase: 'git+https://github.com/me/dsh-vigil.git',
-  })
-  assert.deepEqual(normalizeGitRemote('git@github.com:me/dsh-vigil.git'), {
-    display: 'github.com/me/dsh-vigil.git',
-    specBase: 'git+ssh://git@github.com/me/dsh-vigil.git',
-  })
-  assert.equal(normalizeGitRemote('not a url'), null)
-  assert.deepEqual(parseBundleSource('github:me/dsh-vigil#abc123'), {
-    display: 'github.com/me/dsh-vigil',
-    specBase: 'git+https://github.com/me/dsh-vigil.git',
-  })
-  assert.deepEqual(parseBundleSource('git+https://github.com/me/dsh-vigil.git#abc123'), {
-    display: 'github.com/me/dsh-vigil.git',
-    specBase: 'git+https://github.com/me/dsh-vigil.git',
-  })
-  assert.equal(parseBundleSource('link:D:/work/dsh-vigil'), null)
-  assert.equal(parseBundleSource('dsh-vigil@0.0.1'), null)
-
-  const tag = 'a'.repeat(40)
-  const commit = 'b'.repeat(40)
-  const stdout = [
-    `${tag}\trefs/tags/v0.0.2`,
-    `${commit}\trefs/tags/v0.0.2^{}`,
-    `${'c'.repeat(40)}\trefs/tags/v0.0.1`,
-    `${'d'.repeat(40)}\trefs/tags/v0.0.10`,
-  ].join('\n')
-  const refs = parseTagRefs(stdout)
-  assert.equal(refs.get('v0.0.2'), commit, 'the peeled commit must win over the tag object')
-  const latest = pickLatestTag(stdout, '0.0.1')
-  assert.equal(latest?.version, '0.0.10')
-  assert.equal(latest?.sha, 'd'.repeat(40))
-  assert.equal(pickLatestTag(stdout, '0.0.10'), null, 'no version newer than the running one')
-
-  const dir = tempDir('dsh-vigil-update-')
-  try {
-    const route = createUpdateCheckRoute({ pluginDir: dir, currentVersion: '0.0.1' })
-    const response = await route.fetch(new Request('http://127.0.0.1/api/dsh-vigil/update-check'))
-    const payload = await response.json()
-    assert.equal(response.status, 200)
-    assert.equal(payload.currentVersion, '0.0.1')
-    assert.equal(payload.canUpdate, false)
-    assert.equal(payload.reason, 'no-remote')
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
 })

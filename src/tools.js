@@ -205,7 +205,7 @@ export function registerTools(ctx, deps) {
   register({
     name: 'vigil_doctor',
     description: [
-      'Run a self-check of dsh-vigil and report one pass/fail line per subsystem: hook mount, self-protection guard, browser routes (feed/approval/quarantine/scan/update), inline approval, quarantine, integrity baseline/canary/heartbeat, rule-pack sources, Sage engine, install watcher, audit log and config warnings.',
+      'Run a self-check of dsh-vigil and report one pass/fail line per subsystem: hook mount, self-protection guard, browser routes (feed/approval/quarantine/scan), inline approval, quarantine, integrity baseline/canary/heartbeat, rule-pack sources, Sage engine, install watcher, audit log and config warnings.',
       'Use it after installing or changing configuration when something looks inert; it never mutates state.',
     ].join(' '),
     parameters: { type: 'object', additionalProperties: false, properties: {} },

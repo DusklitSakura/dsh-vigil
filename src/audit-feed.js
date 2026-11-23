@@ -106,6 +106,8 @@ export function buildAuditFeed(runtime, deps, options = {}) {
     schema: 1,
     generatedAt: nowIso(),
     mode: runtime?.config?.mode ?? 'enforce',
+    /** Installed plugin version, read from the manifest; never fetched remotely. */
+    version: typeof options.version === 'string' ? options.version : null,
     /** Host locale hint for reasons that are still generated in Chinese. */
     locale: typeof runtime?.config?.locale === 'string' ? runtime.config.locale : 'auto',
     killSwitch: deps?.isDisabled?.() === true,
@@ -212,7 +214,7 @@ export function buildAuditFeed(runtime, deps, options = {}) {
 
 /**
  * Build one `connection.fetch` route definition for the drawer.
- * @param {{ getRuntime: () => any, isDisabled?: () => boolean, limit?: number, approval?: { list?: () => any[] }, installWatcher?: { list?: () => any[], lastCheckAt?: string|null, lastError?: string|null, describe?: () => string } }} deps
+ * @param {{ getRuntime: () => any, isDisabled?: () => boolean, limit?: number, approval?: { list?: () => any[] }, installWatcher?: { list?: () => any[], lastCheckAt?: string|null, lastError?: string|null, describe?: () => string }, version?: string|null }} deps
  * @returns {{ path: string, methods: Array<'GET'|'HEAD'>, requestBody: 'buffered', fetch: (request: Request) => Promise<Response> }}
  */
 export function createAuditFeedRoute(deps) {
@@ -236,6 +238,7 @@ export function createAuditFeedRoute(deps) {
             limit,
             approval: deps.approval,
             installWatcher: deps.installWatcher,
+            version: deps.version,
           }),
         }
       } catch (error) {

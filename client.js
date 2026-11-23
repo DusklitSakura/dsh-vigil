@@ -46,7 +46,6 @@ const AUDIT_CLEAR_PATH = '/api/dsh-vigil/audit-clear'
 const SAGE_ACTION_PATH = '/api/dsh-vigil/sage-action'
     /** Authenticated POST target for the inline approval buttons. */
     const APPROVAL_PATH = '/api/dsh-vigil/approval'
-const UPDATE_CHECK_PATH = '/api/dsh-vigil/update-check'
 const QUARANTINE_PATH = '/api/dsh-vigil/quarantine'
 const RULES_UPDATE_PATH = '/api/dsh-vigil/rules-update'
 const ALERT_WINDOW_PATH = '/api/dsh-vigil/alert-window'
@@ -80,74 +79,6 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
     function VigilStyleTag() {
       ensureSharedStyle()
       return null
-    }
-
-    /** One JSON API call with the common auth/error contract. */
-    async function apiCall(path, options = {}) {
-      const method = options.method ?? 'GET'
-      const headers = { ...(options.headers ?? {}) }
-      if (options.body !== undefined) headers['content-type'] = 'application/json'
-      const response = await fetch(path, {
-        method,
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok || payload?.ok === false) {
-        const error = new Error(payload?.error ?? `HTTP ${response.status}`)
-        error.status = response.status
-        throw error
-      }
-      return payload
-    }
-
-    /** Shared plugin self-update state machine (version card + settings About). */
-    function useUpdateCheck(t, enabled = true) {
-      const [phase, setPhase] = React.useState('checking')
-      const [info, setInfo] = React.useState(null)
-      const [error, setError] = React.useState(null)
-      const [checkedAt, setCheckedAt] = React.useState(null)
-      const [busy, setBusy] = React.useState(false)
-      const [confirm, setConfirm] = React.useState(false)
-      const [message, setMessage] = React.useState(null)
-      const check = React.useCallback(async () => {
-        setPhase('checking')
-        setError(null)
-        try {
-          const payload = await apiCall(UPDATE_CHECK_PATH)
-          setInfo(payload)
-          setCheckedAt(new Date())
-          setPhase('ready')
-        } catch (err) {
-          setError(err instanceof Error ? err.message : String(err))
-          setPhase('error')
-        }
-      }, [])
-      React.useEffect(() => {
-        if (enabled) void check()
-      }, [check, enabled])
-      const apply = React.useCallback(async () => {
-        if (busy || !info?.canUpdate) return
-        if (!confirm) {
-          setConfirm(true)
-          return
-        }
-        setConfirm(false)
-        setBusy(true)
-        setMessage(null)
-        try {
-          const payload = await apiCall(UPDATE_CHECK_PATH, { method: 'POST', body: { action: 'update' } })
-          setMessage(t('updateApplied').replace('{version}', payload?.updatedTo ?? ''))
-          await check()
-        } catch (err) {
-          setMessage(t('updateApplyFailed').replace('{error}', err instanceof Error ? err.message : String(err)))
-        } finally {
-          setBusy(false)
-        }
-      }, [busy, info, confirm, t, check])
-      return { phase, info, error, checkedAt, busy, confirm, setConfirm, message, check, apply }
     }
 
     const zh = {
@@ -424,40 +355,9 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       installSettingsTitle: '插件安装审计',
       pluginAuditButton: '插件审计',
       installSettingsHint: '安装/更新插件时自动静态扫描；这里也可以不依赖会话手动重新扫描。只统计 profile 依赖中的第三方 bundle（内置 @deepseek-ai/* 与未在此列表中的插件不在扫描范围）。',
-      updateTitle: '插件更新',
-      updateCheck: '检查更新',
-      updateChecking: '检查中…',
-      updateCurrent: '当前版本 v{version}',
-      updateAvailable: '当前 v{current}，可更新到 v{latest}',
-      updateAction: '更新到 v{version}',
-      updateLatest: '当前 v{version} 已是最新版本',
-      updateNoRemote: '尚未配置 GitHub 远程仓库（发布后可检查更新）',
-      updateUnusableRemote: '远程仓库地址无法识别',
-      updateLocalInstall: '当前为本地 link 安装，DSH 自动更新只适用于从 GitHub 固定提交或 npm 安装的版本',
-      updateGitUnpinned: '当前从 GitHub 分支安装（未固定提交），DSH 无法自动更新；请卸载后改用完整提交 sha 安装',
-      updateRegistry: '当前为 npm 安装，请直接用插件页的版本列表更新',
-      updateNetwork: '检查失败：无法访问远程仓库',
-      updateFailed: '检查失败：{error}',
-      updateUnsupported: '当前插件页不支持更新操作',
-      updateSectionTitle: '版本',
-      updateRecheck: '重新检查',
-      updateLatestShort: '已是最新版本',
-      updateAvailableShort: '发现新版本 v{version}',
-      updateCheckedAt: '上次检查于 {time}',
-      updateSourceCode: '代码来源',
-      updateCurrentVersion: '当前版本',
-      updateCheckingShort: '检查中…',
-      updateFailedShort: '检查失败',
-      updateApply: '更新到 v{version}',
-      updateApplying: '更新中…',
-      updateConfirm: '再次点击确认更新',
-      updateApplied: '已更新到 v{version}，请按 DSH 提示刷新或重启',
-      updateApplyFailed: '更新失败：{error}',
       activityAuditing: '守夜人已开始扫描插件权限与风险…',
       aboutTitle: '关于',
       aboutVersion: '版本',
-      aboutRepository: '项目仓库',
-      aboutRepositoryNone: '未配置（发布到 GitHub 后显示）',
       aboutLicense: '许可证',
       aboutRuntime: '运行环境',
       aboutDataDir: '状态目录',
@@ -786,40 +686,9 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       installSettingsTitle: 'Plugin install audits',
       pluginAuditButton: 'Plugin audits',
       installSettingsHint: 'Installs and updates are scanned automatically; re-scan manually here — no chat session required. Only third-party bundles in the profile dependencies are tracked (built-in @deepseek-ai/* packages are not).',
-      updateTitle: 'Plugin update',
-      updateCheck: 'Check for updates',
-      updateChecking: 'Checking…',
-      updateCurrent: 'Current version v{version}',
-      updateAvailable: 'v{current} installed, v{latest} available',
-      updateAction: 'Update to v{version}',
-      updateLatest: 'v{version} is the latest version',
-      updateNoRemote: 'No GitHub origin remote configured yet (publish the repository to enable updates)',
-      updateUnusableRemote: 'The origin remote URL is not understood',
-      updateLocalInstall: 'This is a local link install; DSH auto-update applies only to GitHub commit or npm installs',
-      updateGitUnpinned: 'Installed from a GitHub branch (not a pinned commit); DSH cannot auto-update it. Reinstall with the full commit sha.',
-      updateRegistry: 'Installed from npm; use the version list on the Plugins page to update',
-      updateNetwork: 'Check failed: the remote repository is unreachable',
-      updateFailed: 'Check failed: {error}',
-      updateUnsupported: 'This Plugins page does not support updating here',
-      updateSectionTitle: 'Versions',
-      updateRecheck: 'Check again',
-      updateLatestShort: 'Up to date',
-      updateAvailableShort: 'Version {version} is available',
-      updateCheckedAt: 'Checked at {time}',
-      updateSourceCode: 'Source',
-      updateCurrentVersion: 'Current version',
-      updateCheckingShort: 'Checking…',
-      updateFailedShort: 'Check failed',
-      updateApply: 'Update to v{version}',
-      updateApplying: 'Updating…',
-      updateConfirm: 'Click again to confirm the update',
-      updateApplied: 'Updated to v{version}; refresh or restart when DSH asks',
-      updateApplyFailed: 'Update failed: {error}',
       activityAuditing: 'Vigil started scanning the plugin’s permissions and risks…',
       aboutTitle: 'About',
       aboutVersion: 'Version',
-      aboutRepository: 'Repository',
-      aboutRepositoryNone: 'Not configured (shown once the GitHub repository is published)',
       aboutLicense: 'License',
       aboutRuntime: 'Runtime',
       aboutDataDir: 'State directory',
@@ -3173,98 +3042,6 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
 
 
 
-    /**
-     * Version check shown on this bundle's own Plugins page. DSH's native
-     * version block is registry-only; a GitHub commit install is listed with
-     * `update: 'git'`, so this section fills the same page position and drives
-     * the same native `pluginManager.updateBundle` path through the host route.
-     */
-    function PluginVersionSection(props) {
-      const t = props.__t
-      const subject = props.subject
-      const isSelf = subject?.kind === 'bundle' && subject?.pkg?.name === 'dsh-vigil'
-      const update = useUpdateCheck(t, isSelf)
-      const { phase, info, error, checkedAt, busy, confirm, setConfirm, message, apply } = update
-
-      if (!isSelf) return null
-
-      const time = checkedAt
-        ? `${String(checkedAt.getHours()).padStart(2, '0')}:${String(checkedAt.getMinutes()).padStart(2, '0')}`
-        : ''
-      const state = (() => {
-        if (phase === 'checking') return { tone: 'neutral', title: t('updateCheckingShort'), sub: '' }
-        if (phase === 'error') return { tone: 'error', title: t('updateFailedShort'), sub: error ?? '' }
-        if (info?.canUpdate) {
-          return {
-            tone: 'info',
-            title: t('updateAvailableShort').replace('{version}', info.latestVersion ?? ''),
-            sub: `v${info.currentVersion ?? ''} → v${info.latestVersion ?? ''}`,
-          }
-        }
-        switch (info?.reason) {
-          case 'no-newer-tag':
-            return { tone: 'success', title: t('updateLatestShort'), sub: t('updateCheckedAt').replace('{time}', time) }
-          case 'no-remote': return { tone: 'warn', title: t('updateNoRemote'), sub: '' }
-          case 'unusable-remote': return { tone: 'warn', title: t('updateUnusableRemote'), sub: '' }
-          case 'local-install': return { tone: 'warn', title: t('updateLocalInstall'), sub: '' }
-          case 'git-unpinned': return { tone: 'warn', title: t('updateGitUnpinned'), sub: '' }
-          case 'registry': return { tone: 'warn', title: t('updateRegistry'), sub: '' }
-          case 'network': return { tone: 'error', title: t('updateNetwork'), sub: '' }
-          default: return { tone: 'warn', title: t('updateFailedShort'), sub: info?.error ?? info?.reason ?? '' }
-        }
-      })()
-
-      const glyph = state.tone === 'success'
-        ? h('svg', { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true },
-          h('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor', opacity: 0.14 }),
-          h('path', { d: 'M4.6 8.2 7 10.6l4.4-4.8', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' }))
-        : state.tone === 'info'
-          ? h('svg', { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true },
-            h('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor', opacity: 0.14 }),
-            h('path', { d: 'M8 4.2v6.2M5.3 8.1 8 10.8l2.7-2.7', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }))
-          : h('svg', { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': true },
-            h('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor', opacity: 0.14 }),
-            h('path', { d: 'M8 4.4v4.4', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' }),
-            h('circle', { cx: 8, cy: 11.4, r: 0.9, fill: 'currentColor' }))
-
-      return h('section', { className: 'dsh-vigil-version-section' },
-        h(VigilStyleTag, { key: 'dsh-vigil-shared-style' }),
-        h('div', { className: 'dsh-vigil-version-head' },
-          h('h3', { className: 'dsh-vigil-version-heading' }, t('updateSectionTitle')),
-          h('button', {
-            type: 'button',
-            className: 'dsh-vigil-link dsh-vigil-version-recheck',
-            disabled: phase === 'checking',
-            onClick: () => { void check() },
-          }, t('updateRecheck'))),
-        h('div', { className: 'dsh-vigil-version-card', 'data-tone': state.tone },
-          h('span', { className: 'dsh-vigil-version-glyph', 'aria-hidden': true }, glyph),
-          h('div', { className: 'dsh-vigil-version-main' },
-            h('div', { className: 'dsh-vigil-version-title' }, state.title),
-            state.sub ? h('div', { className: 'dsh-vigil-version-sub' }, state.sub) : null,
-            message ? h('div', { className: 'dsh-vigil-meta', role: 'status' }, message) : null),
-          info?.canUpdate
-            ? h('button', {
-              type: 'button',
-              className: confirm ? 'dsh-vigil-button dsh-vigil-button-danger' : 'dsh-vigil-button',
-              disabled: busy,
-              onClick: () => { void apply() },
-            }, busy
-              ? t('updateApplying')
-              : confirm
-                ? t('updateConfirm')
-                : t('updateAction').replace('{version}', info.latestVersion ?? ''))
-            : null),
-        h('div', { className: 'dsh-vigil-version-source' },
-          h('div', { className: 'dsh-vigil-version-row' },
-            h('span', { className: 'dsh-vigil-about-label' }, t('updateSourceCode')),
-            h('span', { className: 'dsh-vigil-about-value' }, info?.remote ?? t('aboutRepositoryNone'))),
-          h('div', { className: 'dsh-vigil-version-row' },
-            h('span', { className: 'dsh-vigil-about-label' }, t('updateCurrentVersion')),
-            h('span', { className: 'dsh-vigil-about-value' }, `v${info?.currentVersion ?? '—'}`))),
-      )
-    }
-
     /** The 守夜人 settings page. */
         /* ------------------------------------------------------------------ *
      * 守夜人 settings page
@@ -3294,63 +3071,8 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       }
     }
 
-    /** Shared compact update card used by the About section. */
-    function UpdateCard(props) {
-      const { t, state, detail, message, busy, confirm, canUpdate, latestVersion, onApply, onCheck } = props
-      return h('div', { className: 'dsh-vigil-update-card' },
-        h('div', { className: 'dsh-vigil-update-main' },
-          h('div', { className: 'dsh-vigil-update-title' }, t('updateTitle')),
-          h('div', { className: 'dsh-vigil-update-detail' }, detail),
-          message ? h('div', { className: 'dsh-vigil-meta', role: 'status' }, message) : null),
-        h('div', { className: 'dsh-vigil-update-actions' },
-          canUpdate
-            ? h('button', {
-              type: 'button',
-              className: confirm ? 'dsh-vigil-button dsh-vigil-button-danger' : 'dsh-vigil-button',
-              disabled: busy,
-              onClick: onApply,
-            }, busy
-              ? t('updateApplying')
-              : confirm
-                ? t('updateConfirm')
-                : t('updateAction').replace('{version}', latestVersion ?? ''))
-            : null,
-          h('button', {
-            type: 'button',
-            className: 'dsh-vigil-button',
-            disabled: state === 'checking',
-            onClick: onCheck,
-          }, state === 'checking' ? t('updateChecking') : t('updateCheck'))))
-    }
-
-    /** About group (version, repository, self-update card). */
-    function SettingsAbout({ t, open, groupHeader }) {
-      const {
-        phase: updateState,
-        info: updateInfo,
-        busy: updateBusy,
-        confirm: updateConfirm,
-        message: updateMessage,
-        check: checkUpdate,
-        apply: runPluginUpdate,
-      } = useUpdateCheck(t)
-      const updateDetail = (() => {
-        if (updateInfo?.canUpdate) {
-          return t('updateAvailable')
-            .replace('{current}', updateInfo.currentVersion ?? '')
-            .replace('{latest}', updateInfo.latestVersion ?? '')
-        }
-        switch (updateInfo?.reason) {
-          case 'no-remote': return t('updateNoRemote')
-          case 'unusable-remote': return t('updateUnusableRemote')
-          case 'no-newer-tag': return t('updateLatest').replace('{version}', updateInfo.currentVersion ?? '')
-          case 'local-install': return t('updateLocalInstall')
-          case 'git-unpinned': return t('updateGitUnpinned')
-          case 'registry': return t('updateRegistry')
-          case 'network': return t('updateNetwork')
-          default: return updateInfo ? t('updateFailed').replace('{error}', updateInfo.error ?? updateInfo.reason ?? '') : t('updateChecking')
-        }
-      })()
+    /** About group: installed version, license, runtime and state directory. */
+    function SettingsAbout({ t, open, groupHeader, version }) {
       return h('section', {
         className: 'dsh-vigil-group dsh-vigil-about',
         'data-open': open ? 'true' : undefined,
@@ -3360,27 +3082,14 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
         ? h('div', { className: 'dsh-vigil-group-body' },
           h('div', { className: 'dsh-vigil-about-rows' },
             [
-              ['aboutVersion', `v${updateInfo?.currentVersion ?? '—'}`],
-              ['aboutRepository', updateInfo?.remote ?? t('aboutRepositoryNone')],
+              ['aboutVersion', version ? `v${version}` : '—'],
               ['aboutLicense', 'Apache-2.0'],
               ['aboutRuntime', 'Node ≥ 20 · DeepSeek Harness Desktop'],
               ['aboutDataDir', '~/.dsh/vigil'],
             ].map(([labelKey, value]) => h('div', { key: labelKey, className: 'dsh-vigil-about-row' },
               h('span', { className: 'dsh-vigil-about-label' }, t(labelKey)),
               h('span', { className: 'dsh-vigil-about-value' }, value)))),
-          h('p', { className: 'dsh-vigil-row-description' }, t('aboutNoticeText')),
-          h(UpdateCard, {
-            t,
-            state: updateState,
-            detail: updateDetail,
-            message: updateMessage,
-            busy: updateBusy,
-            confirm: updateConfirm,
-            canUpdate: updateInfo?.canUpdate === true,
-            latestVersion: updateInfo?.latestVersion,
-            onApply: () => { void runPluginUpdate() },
-            onCheck: () => { void checkUpdate() },
-          }))
+          h('p', { className: 'dsh-vigil-row-description' }, t('aboutNoticeText')))
         : null)
     }
 
@@ -4227,7 +3936,7 @@ h('section', { className: 'dsh-vigil-group dsh-vigil-help', 'data-open': openGro
             )
             : null,
         ),
-        h(SettingsAbout, { t, open: openGroups.about !== false, groupHeader }),
+        h(SettingsAbout, { t, open: openGroups.about !== false, groupHeader, version: feedState.data?.version }),
         h('div', { className: 'dsh-vigil-actions' },
           h('span', {
             className: saveState === 'error' ? 'dsh-vigil-error' : saveState === 'saved' ? 'dsh-vigil-ok' : 'dsh-vigil-meta',
@@ -4291,32 +4000,11 @@ h('section', { className: 'dsh-vigil-group dsh-vigil-help', 'data-open': openGro
 .dsh-vigil-board-warn .dsh-vigil-board-value { color: var(--dsw-alias-state-warn-primary, #9a6700); }
 .dsh-vigil-board-bad .dsh-vigil-board-value { color: var(--dsw-alias-state-error-primary, #c93a3a); }
 .dsh-vigil-board-foot { margin: 10px 0 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); }
-.dsh-vigil-update-card { box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2)); }
-.dsh-vigil-update-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dsh-vigil-update-title { font-size: 13px; line-height: 19px; font-weight: 500; color: var(--dsw-alias-label-primary); }
-.dsh-vigil-update-detail { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
-.dsh-vigil-update-actions { flex: none; display: inline-flex; gap: 8px; }
 .dsh-vigil-about-rows { display: flex; flex-direction: column; }
 .dsh-vigil-about-row { display: flex; align-items: baseline; gap: 16px; justify-content: space-between; padding: 6px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l1); font-size: 13px; line-height: 20px; }
 .dsh-vigil-about-row:last-child { border-bottom: 0; }
 .dsh-vigil-about-label { flex: none; color: var(--dsw-alias-label-secondary); }
 .dsh-vigil-about-value { color: var(--dsw-alias-label-primary); text-align: right; overflow-wrap: anywhere; }
-.dsh-vigil-version-section { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
-.dsh-vigil-version-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.dsh-vigil-version-heading { margin: 0; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
-.dsh-vigil-version-recheck { font-size: 12px; line-height: 18px; }
-.dsh-vigil-version-card { box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 12px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2)); }
-.dsh-vigil-version-glyph { flex: none; display: inline-flex; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
-.dsh-vigil-version-card[data-tone='success'] .dsh-vigil-version-glyph { color: var(--dsw-alias-state-success-primary, #2f9e44); }
-.dsh-vigil-version-card[data-tone='info'] .dsh-vigil-version-glyph { color: var(--dsw-alias-state-info-primary, #1c7ed6); }
-.dsh-vigil-version-card[data-tone='warn'] .dsh-vigil-version-glyph { color: var(--dsw-alias-state-warn-primary, #f08c00); }
-.dsh-vigil-version-card[data-tone='error'] .dsh-vigil-version-glyph { color: var(--dsw-alias-state-error-primary); }
-.dsh-vigil-version-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dsh-vigil-version-title { font-size: 13px; line-height: 19px; font-weight: 500; color: var(--dsw-alias-label-primary); }
-.dsh-vigil-version-sub { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; }
-.dsh-vigil-version-source { display: flex; flex-direction: column; }
-.dsh-vigil-version-row { display: flex; align-items: baseline; gap: 16px; justify-content: space-between; padding: 6px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l1); font-size: 13px; line-height: 20px; }
-.dsh-vigil-version-row:last-child { border-bottom: 0; }
 .dsh-vigil-meta { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); font-variant-numeric: tabular-nums; }
 .dsh-vigil-empty { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
 .dsh-vigil-warning { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-warn-primary); }
@@ -4639,13 +4327,6 @@ h('section', { className: 'dsh-vigil-group dsh-vigil-help', 'data-open': openGro
           order: 20,
           label: () => t('pluginAuditButton'),
         }, tabProps => h(PluginsAuditTab, { ...tabProps, __ctx: ctx, __t: t })))
-        // Same version/update block position as DSH's own registry bundle
-        // detail section, backed by the native pluginManager.updateBundle path.
-        ctx.slots.inject('plugins.detail.section', () => ctx.slots.register({
-          name: 'plugins.detail.section',
-          id: 'dsh-vigil-version',
-          order: 20,
-        }, detailProps => h(PluginVersionSection, { ...detailProps, __t: t })))
       },
     }
   },
