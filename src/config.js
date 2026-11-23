@@ -385,14 +385,6 @@ function cloneDefault(value) {
  * @param {string[]} warnings
  */
 function validateDecisionFields(config, warnings) {
-  // Old boolean switches -> tri-state decisions (true meant block).
-  for (const field of ['runtimeGuard', 'canary']) {
-    if (typeof config.sentinel[field] === 'boolean') {
-      config.sentinel[field] = config.sentinel[field] ? 'deny' : 'allow'
-    }
-  }
-  /** @type {Array<[any, string, string, any]>} */
-  /** @type {Array<[any, string, string, any]>} */
   const fields = [
     [config.sentinel, 'credentialReads', 'sentinel.credentialReads', DEFAULT_CONFIG.sentinel.credentialReads],
     [config.sentinel, 'credentialExfil', 'sentinel.credentialExfil', DEFAULT_CONFIG.sentinel.credentialExfil],
