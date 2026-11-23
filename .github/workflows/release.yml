@@ -61,7 +61,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::Add an npm automation token as the repository secret NPM_TOKEN (Settings -> Secrets and variables -> Actions), then re-run this job."
+            echo "::error::Add an npm granular access token with bypass 2FA as the repository secret NPM_TOKEN (Settings -> Secrets and variables -> Actions), then re-run this job."
             exit 1
           fi
 
