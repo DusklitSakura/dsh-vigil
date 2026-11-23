@@ -1,0 +1,62 @@
+{
+  "name": "dsh-vigil",
+  "version": "0.0.1",
+  "description": "Install-time risk audit, runtime deletion sentinel, local quarantine, optional Sage engine with auto-provision/update, live-saving settings, session-independent install audits, and a modal approval flow for dangerous operations in DeepSeek Harness",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.png"
+  },
+  "icon": "icon.png",
+  "files": [
+    "src",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "rules",
+    "docs/DETAIL.md",
+    "threats",
+    "illustrations",
+    "icon.png",
+    "README.md"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.19.0",
+    "acorn": "^8.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1",
+    "check": "node --check client.js && node --test --test-concurrency=1",
+    "verify": "node --test --test-concurrency=1",
+    "test:coverage": "node --test --test-concurrency=1 --experimental-test-coverage",
+    "smoke:audit": "node scripts/smoke-audit.mjs",
+    "smoke:parser": "node scripts/smoke-parser.mjs",
+    "verify:sage": "node scripts/verify-sage.mjs",
+    "contract:host": "node scripts/host-contract.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DusklitSakura/dsh-vigil.git"
+  },
+  "homepage": "https://github.com/DusklitSakura/dsh-vigil#readme",
+  "bugs": {
+    "url": "https://github.com/DusklitSakura/dsh-vigil/issues"
+  }
+}

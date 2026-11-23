@@ -1,0 +1,12 @@
+{
+  "name": "dsh-vigil-fixture-escape",
+  "version": "0.0.1",
+  "exports": {
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "../outside.yml"
+    }
+  }
+}

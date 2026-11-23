@@ -1,0 +1,13 @@
+{
+  "name": "dsh-vigil-fixture-patch-override",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

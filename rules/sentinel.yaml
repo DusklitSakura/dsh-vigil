@@ -1,0 +1,289 @@
+# dsh-vigil runtime rule data (sentinel half).
+#
+# The matching engine lives in src/sentinel/rules.js; this file only carries the
+# data it matches with. Replacing this file with a newer one updates the rules
+# without shipping a plugin release.
+#
+# Installing an override:
+#   put a *.yaml file into <DSH_HOME>/vigil/rules/ (or rules.dir) — files are
+#   applied after this one, alphabetically; later definitions win per section.
+#
+# Fields per entry:
+#   source: JavaScript regular expression (single-quoted; write '' for a quote)
+#   flags:  i | m | s | u  (optional)
+#   label:  human readable name shown in the block reason
+#
+# `append: true` at the top appends to the built-in list instead of replacing it.
+schema: 1
+id: builtin-sentinel
+
+credentialPatterns:
+  - source: '(?:^|[\\/\s"=])\.ssh(?:[\\/\s"]|$)'
+    flags: i
+    label: SSH 目录
+  - source: '\bid_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?\b'
+    flags: i
+    label: SSH 私钥
+  - source: '\.aws[\\/](?:credentials|config)\b'
+    flags: i
+    label: AWS 凭据文件
+  - source: '\.git-credentials\b'
+    flags: i
+    label: Git 凭据文件
+  - source: '\.npmrc\b'
+    flags: i
+    label: npm 凭据文件
+  - source: '\.gnupg\b'
+    flags: i
+    label: GPG 密钥目录
+  - source: '\b(?:Login Data|key4\.db|logins\.json|cookies\.sqlite)\b'
+    flags: i
+    label: 浏览器凭据库
+  - source: '\.(?:pem|p12|pfx)\b'
+    flags: i
+    label: 证书/私钥文件
+  - source: '(?:^|[\\/\s"=])\.env(?:\.[\w-]+)?(?:[\\/\s"]|$)'
+    flags: i
+    label: .env 环境变量文件
+  - source: '(?:^|[\\/\s"=])\.netrc\b'
+    flags: i
+    label: .netrc 凭据文件
+  - source: '[\\/]\.docker[\\/]config\.json'
+    flags: i
+    label: Docker 凭据文件
+  - source: '[\\/]\.kube[\\/]config\b'
+    flags: i
+    label: Kubernetes 凭据文件
+  - source: '[\\/]\.config[\\/]gh[\\/]hosts\.yml'
+    flags: i
+    label: GitHub CLI 凭据
+  - source: '[\\/]\.config[\\/]gcloud[\\/]application_default_credentials\.json'
+    flags: i
+    label: GCloud 凭据
+
+persistence:
+  - source: '(?:\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile|Microsoft[\\/]Windows[\\/]Start Menu[\\/]Programs[\\/]Startup|HKCU[\\/:]Software[\\/]Microsoft[\\/]Windows[\\/]CurrentVersion[\\/]Run|HKEY_CURRENT_USER[\\/]Software[\\/]Microsoft[\\/]Windows[\\/]CurrentVersion[\\/]Run|\\\\CurrentVersion\\\\Run\b|launchd|systemd\/system|ScheduledTasks)'
+    flags: i
+
+# Irreversible system destruction: disk/partition/boot, registry, shadow copies,
+# event logs, security controls, trust store, accounts and system permission
+# files. Patterns are anchored to a command position to stay usable as data.
+destructiveSystemPatterns:
+  - source: '(?:^|[\s;&|('"`])format(?:\.com)?\s+[a-z]:'
+    flags: i
+    label: 格式化磁盘
+  - source: '(?:^|[\s;&|('"`])(?:Format-Volume|Clear-Disk|Initialize-Disk|Remove-Partition|Set-Partition|Set-Disk|Resize-Partition)\b'
+    flags: i
+    label: PowerShell 卷/分区破坏
+  - source: '(?:^|[\s;&|('"`])diskpart(?:\.exe)?\b'
+    flags: i
+    label: 磁盘分区工具
+  - source: '(?:^|[\s;&|('"`])(?:bcdedit|reagentc|bootrec)(?:\.exe)?\b'
+    flags: i
+    label: 引导/恢复环境修改
+  - source: '(?:^|[\s;&|('"`])reg(?:\.exe)?\s+(?:delete|import|restore|load|unload)\b'
+    flags: i
+    label: 注册表删除/导入
+  - source: '(?:^|[\s;&|('"`])regedit(?:\.exe)?\s+\/(?:s|S)\b'
+    flags: i
+    label: 注册表脚本静默导入
+  - source: 'Remove-Item[^\n]*\b(?:HKLM|HKCU|HKCR|HKU|HKCC):'
+    flags: i
+    label: PowerShell 注册表递归删除
+  - source: '(?:reg\s+add|Set-ItemProperty|New-ItemProperty)[^\n]*(?:Winlogon[^\n]*(?:Shell|Userinit)|AppInit_DLLs)'
+    flags: i
+    label: 登录项/AppInit 持久化
+  - source: '(?:vssadmin(?:\.exe)?\s+(?:delete\s+shadows|resize\s+shadowstorage)|wmic[^\n]*shadowcopy[^\n]*delete|Win32_ShadowCopy[^\n]*(?:Remove|Delete)|wbadmin[^\n]*delete|Disable-ComputerRestore)'
+    flags: i
+    label: 卷影副本/备份删除
+  - source: '(?:wevtutil(?:\.exe)?\s+(?:cl|clear-log|(?:sl|set-log)[^\n]*(?:\/e|--enabled):\s*(?:false|0))|Clear-EventLog|auditpol(?:\.exe)?\s+\/clear|logman[^\n]*\b(?:stop|delete)\b)'
+    flags: i
+    label: 事件日志/审计停用或清除
+  - source: '(?:sc(?:\.exe)?\s+config[^\n]*(?:WinDefend|windefend|wuauserv|firewall)[^\n]*start\s*=\s*disabled|Set-Service[^\n]*(?:WinDefend|windefend|wuauserv|firewall)[^\n]*-StartupType\s+Disabled)'
+    flags: i
+    label: 安全服务禁用启动
+  - source: 'Remove-Item[^\n]*Cert:\\(?:LocalMachine|CurrentUser)'
+    flags: i
+    label: 删除证书存储
+  - source: '(?:Set-MpPreference[^\n]*(?:Disable|Exclusion)|Add-MpPreference[^\n]*-Exclusion(?:Path|Process|Extension)|DisableAntiSpyware)'
+    flags: i
+    label: 关闭 Defender / 添加排除
+  - source: '(?:netsh[^\n]*advfirewall[^\n]*(?:state\s+off|allprofiles[^\n]*off)|Set-NetFirewallProfile[^\n]*-Enabled\s+(?:False|false)|Set-NetFirewallRule[^\n]*-Enabled\s+(?:False|false)|Disable-NetFirewallRule)'
+    flags: i
+    label: 关闭防火墙
+  - source: '(?:reg\s+add[^\n]*EnableLUA[^\n]*\b0\b|Set-ItemProperty[^\n]*EnableLUA[^\n]*\b0\b|New-ItemProperty[^\n]*EnableLUA[^\n]*\b0\b)'
+    flags: i
+    label: 关闭 UAC
+  - source: 'Set-ExecutionPolicy[^\n]*(?:Bypass|Unrestricted)'
+    flags: i
+    label: PowerShell 执行策略放宽
+  - source: '(?:Import-Certificate[^\n]*(?:LocalMachine|Root)|certutil(?:\.exe)?[^\n]*-addstore[^\n]*(?:root|Root))'
+    flags: i
+    label: 安装根证书/信任篡改
+  - source: '(?:Set-Content|Add-Content|Out-File|echo|>>?)[^\n]*(?:drivers[\\/]etc[\\/]hosts)|netsh\s+winhttp\s+set\s+proxy'
+    flags: i
+    label: hosts/系统代理篡改
+  - source: '(?:net(?:\.exe)?\s+(?:user|localgroup)[^\n]*(?:\/add|\/delete|administrators)|Set-LocalUser|New-LocalUser|Remove-LocalUser|usermod[^\n]*-aG\s+(?:sudo|wheel|admin)|(?:useradd|userdel|groupadd|groupdel|chpasswd)\b)'
+    flags: i
+    label: 账户/管理员组修改
+  - source: '(?:takeown(?:\.exe)?[^\n]*(?:\/f\s+[a-z]:|\/r)|icacls[^\n]*\/(?:grant|deny)[^\n]*(?:Everyone|Users|Authenticated)|cacls(?:\.exe)?[^\n]*\/(?:g|p)[^\n]*(?:Everyone|Users))'
+    flags: i
+    label: 全盘权限接管
+  - source: '(?:^|[\s;&|('"`])mkfs(?:\.\w+)?\b'
+    flags: i
+    label: Linux 文件系统格式化
+  - source: '(?:^|[\s;&|('"`])(?:wipefs|fdisk|parted|sgdisk|gdisk)\b'
+    flags: i
+    label: 分区表/文件系统签名的破坏
+  - source: 'dd[^\n]*of=(?:\/dev\/(?:sd|nvme|hd|mmcblk|disk|vd|xvd|loop)|\\\\\\.\\PhysicalDrive)'
+    flags: i
+    label: 直接写块设备
+  - source: '(?:zpool\s+destroy|lvremove\b|vgremove\b|mdadm[^\n]*--zero-superblock|shred[^\n]*\/dev\/|diskutil\s+(?:eraseDisk|eraseVolume|partitionDisk|secureErase)|hdparm[^\n]*--security-erase|blkdiscard\b|sg_format\b)'
+    flags: i
+    label: 磁盘/阵列擦除
+  - source: '(?:iptables\s+(?:-F|-X|--flush)|nft\s+flush\s+ruleset|ufw\s+(?:disable|reset)|firewall-cmd[^\n]*--panic-on|systemctl\s+(?:disable|mask|stop)[^\n]*(?:firewalld|apparmor|selinux|auditd|ssh)|setenforce\s+0)'
+    flags: i
+    label: Linux 安全防护关闭
+  - source: '(?:chmod\s+-R\s+(?:777|000)\s+\/(?:\s|$)|chmod\s+-R\s+(?:777|000)\s+\/(?:etc|usr|bin|sbin|boot|lib|opt)\b|chown\s+-R\s+\S+\s+\/(?:\s|$))'
+    flags: i
+    label: 系统目录权限破坏
+  - source: '(?:>|>>|tee(?:\s+-a)?|sed\s+-i|Set-Content|Add-Content|Out-File)[^\n]*\/etc\/(?:sudoers|passwd|shadow)'
+    flags: i
+    label: 系统账户/提权配置写入
+  - source: '(?:schtasks(?:\.exe)?\s+\/(?:create|delete|change)|New-Service\b|sc(?:\.exe)?\s+(?:create|delete)|Register-WmiEvent|Register-ScheduledTask|Register-ScheduledJob|mofcomp\b|launchctl\s+(?:load|unload|bootstrap|bootout))'
+    flags: i
+    label: 服务/计划任务持久化
+  - source: 'fsutil[^\n]*(?:repair\s+set|dirty\s+set|sparse\s+set|behavior\s+set|usn\s+deletejournal|file\s+setzerodata|volume\s+dismount)'
+    flags: i
+    label: fsutil 危险子命令
+  - source: '(?:csrutil\s+disable|spctl\s+--master-disable|nvram\s+-d\b)'
+    flags: i
+    label: macOS 安全防护关闭
+  - source: '(?:chmod\s+(?:[0-7]{3,4}|[augo][+=][rwx]+)[^\n]*\/etc\/(?:shadow|sudoers|passwd|gshadow)|chattr\s+[+-][A-Za-z]\s+\/(?:etc|usr|bin|sbin)|setfacl[^\n]*\/(?:etc|usr|bin|sbin))'
+    flags: i
+    label: 系统敏感文件权限修改
+  - source: '(?:net(?:\.exe)?\s+(?:accounts|share)\b|netsh\s+http\s+add\s+urlacl)'
+    flags: i
+    label: 账户策略/共享/URL 权限修改
+  - source: '(?:wmic[^\n]*(?:useraccount[^\n]*(?:delete|call)|service[^\n]*call\s+create)|Invoke-CimMethod[^\n]*-ClassName\s+Win32_Process[^\n]*-MethodName\s+Create)'
+    flags: i
+    label: WMI 账户/服务/进程创建
+  - source: 'crontab\s+-r\b'
+    flags: i
+    label: 清空 crontab
+  - source: '(?:cipher(?:\.exe)?\s+\/w|sdelete(?:\.exe)?|fsutil[^\n]*(?:deletejournal|setzerodata|volume\s+dismount))'
+    flags: i
+    label: 反取证擦除
+  - source: 'Get-ChildItem[^\n]*\|[^\n]*(?:Remove-Item|rm\b|del\b)'
+    flags: i
+    label: 管道式批量删除
+  - source: '(?:history\s+-c|Clear-History|Remove-Item[^\n]*(?:ConsoleHost_history|\.bash_history|\.zsh_history))'
+    flags: i
+    label: 命令历史清除
+  - source: '(?:passwd\s+(?:root|--stdin)|visudo)'
+    flags: i
+    label: root 口令/sudoers 修改
+  - source: 'mountvol[^\n]*\/d\b'
+    flags: i
+    label: 卸载卷/删除挂载点
+
+# Large-scale data destruction outside the filesystem: databases, containers,
+# cloud resources, git history and availability/DoS actions. Default decision is
+# ask because these can be legitimate operator work.
+destructiveDataPatterns:
+  - source: '\b(?:DROP\s+(?:DATABASE|SCHEMA|TABLE)|TRUNCATE\s+TABLE)\b'
+    flags: i
+    label: SQL 删库/删表
+  - source: '\bDELETE\s+FROM\s+[\w."`]+\s*(?:;|$)'
+    flags: i
+    label: SQL 全表删除
+  - source: '\b(?:FLUSHALL|FLUSHDB)\b'
+    flags: i
+    label: Redis 清库
+  - source: 'dropDatabase\s*\('
+    flags: i
+    label: MongoDB 删库
+  - source: '(?:docker|podman|nerdctl)\s+(?:system\s+prune|container\s+prune|image\s+prune|volume\s+(?:rm|prune)|rm\s+-f)|(?:docker|podman)\s+compose\s+down[^\n]*-v\b'
+    flags: i
+    label: Docker/容器清理与卷删除
+  - source: 'kubectl\s+delete\s+(?:namespace|ns|pvc|pv|deployment|statefulset|daemonset|secret|configmap|service|ingress|all)|kubectl\s+delete[^\n]*--all\b|helm\s+(?:uninstall|delete)'
+    flags: i
+    label: Kubernetes/Helm 资源删除
+  - source: 'terraform\s+destroy'
+    flags: i
+    label: Terraform 销毁
+  - source: 'aws\s+(?:s3\s+(?:rb[^\n]*--force|rm[^\n]*--recursive)|s3api\s+delete-bucket|ec2\s+terminate-instances|rds\s+delete|dynamodb\s+delete-table|cloudformation\s+delete-stack)'
+    flags: i
+    label: AWS 资源/存储删除
+  - source: '(?:gcloud\s+(?:projects\s+delete|compute\s+instances\s+delete)|az\s+group\s+delete)'
+    flags: i
+    label: GCloud/Azure 资源删除
+  - source: 'git\s+(?:push[^\n]*(?:--force\b|-f\b)|reset\s+--hard|clean[^\n]*\s-[a-z]*f[a-z]*\b|filter-branch|update-ref\s+-d)'
+    flags: i
+    label: Git 历史销毁
+  - source: 'git\s+branch\s+-D\s+(?:main|master)'
+    flags: i
+    label: 删除主干分支
+  - source: '(?:taskkill[\s\S]{0,40}(?:\/F\b|\/IM\s+\*)|Stop-Process[^\n]*(?:-Name|-Id)|kill\s+-9\s+(?:-1|1|\$\$)|killall\b|pkill\s+-9)'
+    flags: i
+    label: 进程批量终止
+  - source: '(?:Stop-Service[^\n]*(?:WinDefend|windefend|Sense|wuauserv|firewall)|sc(?:\.exe)?\s+stop[^\n]*(?:WinDefend|windefend|wuauserv|firewall)|net\s+stop[^\n]*(?:WinDefend|windefend|wuauserv|firewall))'
+    flags: i
+    label: 安全服务停止
+  - source: '(?:^|[\s;&|('"`])(?:shutdown(?:\.exe)?\s+\/(?:s|r|p)\b|Stop-Computer\b|Restart-Computer\b|reboot\b)'
+    flags: i
+    label: 关机/重启
+  - source: '(?:npm\s+unpublish|npm\s+cache\s+clean\s+--force|Clear-RecycleBin|psexec(?:\.exe)?|wmic[^\n]*process[^\n]*call\s+create)'
+    flags: i
+    label: 撤回发布/清空回收站/远程执行
+  - source: '(?:wsl\s+--unregister|VBoxManage\s+unregistervm|vagrant\s+destroy)'
+    flags: i
+    label: 删除 WSL/虚拟机
+  - source: 'Remove-Item[^\n]*\$(?:env:)?(?:USERPROFILE|HOME)\b'
+    flags: i
+    label: 删除用户主目录（变量目标）
+  - source: 'rm\s+-rf?\s+(?:~|\$HOME|\$\{HOME\})'
+    flags: i
+    label: 删除用户主目录（POSIX）
+  - source: '(?:Enable-PSRemoting|winrm\s+quickconfig|Set-Item[^\n]*WSMan|netsh\s+interface\s+portproxy\s+add|netsh[^\n]*advfirewall[^\n]*add\s+rule[^\n]*action\s*=\s*allow|New-NetFirewallRule[^\n]*-Action\s+Allow|netsh\s+firewall\s+add)'
+    flags: i
+    label: 远程管理/端口转发/防火墙放行
+  - source: '(?:^\s*(?:-[A-Za-z]+\s+)*dropdb\b|psql[^\n]*DROP\s+DATABASE)'
+    flags: i
+    label: PostgreSQL 删库
+  - source: 'dd\s+if=[^\n]*of=(?!\/dev\/|\\\\\\.\\PhysicalDrive)'
+    flags: i
+    label: dd 覆写普通文件
+  - source: 'certutil(?:\.exe)?[^\n]*-(?:urlcache|url|verifyctl)'
+    flags: i
+    label: certutil 下载文件
+  - source: '(?:mshta(?:\.exe)?[^\n]*https?:\/\/|regsvr32(?:\.exe)?[^\n]*\/i:https?:\/\/|rundll32(?:\.exe)?[^\n]*javascript:)'
+    flags: i
+    label: LOLBin 远程脚本执行
+  - source: 'bitsadmin(?:\.exe)?\s+\/transfer\b'
+    flags: i
+    label: BITS 后台下载
+  - source: '(?:chroot\b|nsenter\b)'
+    flags: i
+    label: 容器/根目录逃逸
+  - source: 'truncate\s+-s\s+0\b'
+    flags: i
+    label: 截断文件内容
+  - source: 'git\s+(?:push[^\n]*--mirror\b|gc[^\n]*--prune=now)'
+    flags: i
+    label: Git 强制镜像/清理回收
+  - source: '(?:mongorestore[^\n]*--drop\b|mysqladmin[^\n]*\bdrop\b|pg_dropcluster\b)'
+    flags: i
+    label: 数据库强制删除
+  - source: '(?:aws\s+[a-z0-9-]+\s+delete-[a-z0-9-]+|gcloud\s+[a-z0-9-]+(?:\s+[a-z0-9-]+){0,2}\s+delete\b|az\s+[a-z0-9-]+\s+[a-z0-9-]*delete\b)'
+    flags: i
+    label: 云资源通用删除
+  - source: '(?:docker|podman)\s+run[^\n]*(?:--privileged|\-v\s+\/:\/host|\-v\s+\/var\/run\/docker\.sock)'
+    flags: i
+    label: 容器特权/挂载逃逸
+  - source: '(?:Enter-PSSession|New-PSSession|Invoke-Command[^\n]*-ComputerName|logoff(?:\.exe)?\b)'
+    flags: i
+    label: 远程会话/注销
+  - source: '(?:Set-DnsClientServerAddress|netsh\s+interface\s+ip\s+set\s+dns|route\s+add\b|netsh\s+winhttp\s+reset\s+proxy)'
+    flags: i
+    label: DNS/路由/代理篡改

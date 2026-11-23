@@ -1,0 +1,7 @@
+# dsh-vigil bundle patch: mount the Host plugin row.
+# User configuration goes in this row's `config` (see README "配置" section).
+# The plugin runs with the Harness host process permissions; it is not a sandbox.
+- insert:
+    - id: dsh-vigil
+      name: dsh-vigil
+      config: {}

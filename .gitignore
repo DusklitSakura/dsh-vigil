@@ -1,0 +1,45 @@
+node_modules/
+.testdeps/
+coverage/
+*.log
+.DS_Store
+
+# Local/sensitive material — never commit real credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+credentials*
+npm-debug.log*
+
+# Generated audit/scratch artifacts
+audit-*.jsonl
+*.tgz
+*.tmp
+*.bak
+*.orig
+
+# Local artwork sources (the shipped icon.png / illustrations are generated from these)
+/icon1.png
+/icon2.png
+/Warning.png
+/notice.png
+
+# Demo/scratch fixtures for manual UI scenes
+.scene-demo/
+
+# Standalone design demos (not part of the plugin)
+/demo/
+
+# Local promo media — published as release assets, never shipped in the package
+/docs/media/
+docs/reel-case.json
+
+# Internal working documents — kept locally, never published
+docs/BACKLOG.md
+docs/REQUIREMENTS.md
+docs/review-*/
+

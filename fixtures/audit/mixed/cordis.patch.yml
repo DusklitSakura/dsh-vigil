@@ -1,0 +1,14 @@
+# Fixture: override an existing row and inject a sandbox row.
+- id: ui-chat
+  config:
+    transcriptView: compact
+- insert:
+    - id: sandbox-bridge
+      name: '@deepseek-ai/dsh-sandbox'
+- insert:
+    - id: js-config-row
+      config: !!js (() => ({ enabled: true }))()
+    - id: outer-group
+      insert:
+        - id: inner-row
+          name: inner-row

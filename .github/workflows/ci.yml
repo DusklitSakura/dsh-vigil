@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24, 26]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies (acorn for AST tests)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Dependency preflight (acorn)
+        run: node -e "require.resolve('acorn')"
+
+      - name: Syntax check (client bundle)
+        run: node --check client.js
+
+      - name: Unit and integration tests
+        run: node --test
+
+      - name: Coverage gate (lines/branches/functions)
+        run: node --test --test-concurrency=1 --experimental-test-coverage --test-coverage-lines=85 --test-coverage-branches=72 --test-coverage-functions=82
+
+      - name: Packed file list check
+        run: npm pack --dry-run
