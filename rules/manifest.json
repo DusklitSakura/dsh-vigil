@@ -1,7 +1,7 @@
 {
-  "version": "2026.11.22",
+  "version": "2026.11.23",
   "files": {
-    "sentinel.yaml": "https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-vigil@main/rules/sentinel.yaml",
-    "audit.yaml": "https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-vigil@main/rules/audit.yaml"
+    "sentinel.yaml": "https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/sentinel.yaml",
+    "audit.yaml": "https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/audit.yaml"
   }
 }
