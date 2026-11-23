@@ -4,6 +4,8 @@
 
 ## 1. 普通用户安装
 
+### 1.1 从 GitHub 安装（推荐）
+
 推荐通过 Harness 插件管理器安装固定 GitHub 提交：
 
 1. 打开 **Plugins → Add plugin**。
@@ -19,6 +21,25 @@
 固定提交便于复现安装内容。请从仓库提交页面复制真实 SHA，不要使用短 SHA 或浮动分支作为需要可复现的部署来源。
 
 如果当前会话提供 `plugin_manager`，也可通过 `install_bundle` 安装同一规格。
+
+### 1.2 从 npm 安装（备选）
+
+从 `0.0.2` 起，发布版本由 CI 通过 npm trusted publishing 发布到 `dsh-vigil`，并附带 provenance 证明。安装方式与其他 registry 包一致：
+
+1. 打开 **Plugins → Add plugin**。
+2. 输入 npm 安装规格，建议固定版本：
+
+   ```text
+   dsh-vigil@0.0.2
+   ```
+
+3. 将 `0.0.2` 替换为 npm 上要安装的版本；只写 `dsh-vigil` 时由 pnpm 解析最新版本，可复现性不如固定版本。
+4. 安装完成后按 Harness 提示新开会话、等待 HMR 或刷新页面；设置入口为 **Settings → 守夜人**。
+
+如果当前会话提供 `plugin_manager`，也可通过 `install_bundle` 安装 `dsh-vigil@<版本>`。npm 安装的 bundle 在 **Plugins** 页面的版本列表中检查与更新，不需要像 GitHub 固定提交那样手工替换 SHA。
+
+> [!NOTE]
+> npm 安装由 DSH 插件管理器写入当前 profile 的依赖并完成 bundle 选择。不要直接在 profile 目录执行 `npm install`，也不要只把包安装到普通项目目录——那样的副本不会被 Harness 加载。只有本地 `link:` 调试才需要在包目录自行安装依赖。
 
 ## 2. 依赖与构建
 
@@ -73,7 +94,7 @@ DSH 会记录 Git 安装来源，并使用自己的插件管理流程处理后�
 
 首次发布必须先手动完成，因为 npm 只允许为已存在的包配置 trusted publisher。三处的仓库、workflow 文件名与环境名必须完全一致，否则 OIDC 校验失败。同一版本号发布后不能重发，只能 `npm deprecate` 或发布新版本。
 
-当前发布版本为 `v0.0.1`；后续版本请以仓库 Release 页面、npm 版本列表与 `package.json` 为准。
+当前发布版本为 `v0.0.2`；后续版本请以仓库 Release 页面、npm 版本列表与 `package.json` 为准。
 
 ### 3.3 用户更新
 

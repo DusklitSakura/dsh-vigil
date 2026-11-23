@@ -35,7 +35,7 @@ DSH VIGIL 为 DeepSeek Harness 增加安装审计、运行时危险操作评估�
 
 ## 安装与使用
 
-1. 在 **Plugins → Add plugin** 中添加 `dsh-vigil`。建议使用 GitHub 固定提交或受信任的 npm 包。
+1. 在 **Plugins → Add plugin** 中添加 `dsh-vigil@<版本>`（npm），或固定提交 `github:DusklitSakura/dsh-vigil#<40 位 commit SHA>`。两种方式都会由插件管理器完成安装与后续更新。
 2. 打开 **Settings → 守夜人**，检查运行模式、规则决策、删除阈值、隔离区、审计与可选 Sage 设置。
 3. 在会话工具列表中使用 `vigil_scan`、`vigil_status`、`vigil_doctor`、`vigil_audit`、`vigil_quarantine`、`vigil_rules`、`vigil_integrity` 与 `vigil_sage`。
 

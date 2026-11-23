@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/DusklitSakura/dsh-vigil/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-3B82F6?style=flat-square" alt="Apache-2.0 License" /></a>
+  <a href="https://www.npmjs.com/package/dsh-vigil"><img src="https://img.shields.io/npm/v/dsh-vigil?style=flat-square&label=npm&color=CB3837" alt="npm version" /></a>
   <img src="https://img.shields.io/badge/Node.js-%E2%89%A520-2563EB?style=flat-square" alt="Node.js >=20" />
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-Plugin-0F2D5C?style=flat-square" alt="DeepSeek Harness Plugin" />
 </p>
@@ -109,6 +110,24 @@
 
 如果当前会话提供 `plugin_manager`，也可以调用 `install_bundle`，并将 `target` 设置为同一个 GitHub 安装规格。
 
+### 备选：从 npm 安装
+
+适合希望跟随版本号而不是固定提交更新的场景。从 `0.0.2` 起，发布版本由 CI 通过 npm trusted publishing 发布，并附带 provenance 证明。
+
+1. 打开 DeepSeek Harness 的 **Plugins → Add plugin**。
+2. 输入 npm 安装规格，建议固定到具体版本：
+
+   ```text
+   dsh-vigil@0.0.2
+   ```
+
+3. 将 `0.0.2` 替换为 [npm 版本列表](https://www.npmjs.com/package/dsh-vigil?activeTab=versions) 中的目标版本；只写 `dsh-vigil` 时由 pnpm 解析当前最新版本，可复现性不如固定版本。
+4. 安装完成后同样新开一个会话生效（或等待 Harness HMR 激活）。之后可在 **Plugins** 页面的版本列表中检查并更新到新版本。
+
+如果当前会话提供 `plugin_manager`，可调用 `install_bundle`，并把 `target` 设为 `dsh-vigil@<版本>`。
+
+> **不要手动安装到 profile：** npm 安装由 DSH 插件管理器写入当前 profile 的依赖并完成 bundle 选择。直接在 profile 目录执行 `npm install`，或只把包安装到普通项目目录，Harness 都不会加载它。本地 `link:` 调试的依赖处理见[安装与恢复说明](docs/install.md)。
+
 > **安装审计时机：** 本地路径安装在执行前同步扫描并询问；GitHub / registry / tarball 安装无法在下载前扫描，会在插件管理器完成安装/更新后立即触发后台静态审计（`plugin-manager/changed`），并保留约 60 秒的兜底差分；扫描完成后弹出审计结果。首次启动只建立基线，不会把已有插件全部重新报告。
 
 ### 依赖与构建
@@ -164,7 +183,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [安装、更新与卸载](docs/install.md) | GitHub 固定提交安装、更新、停用与本地安装风险 |
+| [安装、更新与卸载](docs/install.md) | GitHub 固定提交与 npm 安装、更新、停用与本地安装风险 |
 | [配置参考](docs/configuration.md) | 全部配置字段、默认值与保护根分级 |
 | [设置页说明](docs/settings.md) | 设置、规则包更新、对话内审计与审批 |
 | [行为与决策流](docs/behavior.md) | 决策过程、删除隔离边界与规模计量限制 |
