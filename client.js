@@ -124,11 +124,6 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       sageSection: 'Sage 引擎（可选）',
       otherSection: '其他',
       notifySection: '提示与审批',
-      helpTitle: '运行状态与恢复',
-      helpStatus: '运行状态与最近决策：让代理调用 vigil_status；恢复隔离区：vigil_quarantine；校验审计链：vigil_audit。',
-      helpKill: '紧急停用：创建 <DSH_HOME>/vigil/DISABLED 空文件（或设置环境变量 DSH_VIGIL_DISABLED=1），下一次工具调用即生效。',
-      helpLimits: '这不是安全边界：插件以宿主进程权限运行；静态扫描无法覆盖运行时可变行为；删除规模是有界估算。',
-      helpSage: '开启 Sage 后会自动从 npm 下载最新稳定版引擎与规则并启用；开启自动升级后每天检查新版本，校验通过后热替换，失败自动回滚。',
       unitMiB: 'MiB',
       unitMs: '毫秒',
       unitHours: '小时',
@@ -466,11 +461,6 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       sageSection: 'Sage engine (optional)',
       otherSection: 'Other',
       notifySection: 'Notices and approval alerts',
-      helpTitle: 'Status and recovery',
-      helpStatus: 'Runtime status and recent decisions: ask the agent for vigil_status. Quarantine restore: vigil_quarantine. Audit chain verification: vigil_audit.',
-      helpKill: 'Emergency stop: create an empty <DSH_HOME>/vigil/DISABLED file (or set DSH_VIGIL_DISABLED=1); it takes effect on the next tool call.',
-      helpLimits: 'Not a security boundary: the plugin runs with host-process privileges; static scans cannot cover runtime-variable behaviour; deletion volume numbers are bounded estimates.',
-      helpSage: 'Enabling Sage downloads the newest stable engine and rules from npm automatically. Auto-upgrade re-checks daily and hot-swaps a verified newer pair, rolling back on failure.',
       unitMiB: 'MiB',
       unitMs: 'ms',
       unitHours: 'hours',
@@ -922,17 +912,20 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       lenient: {
         mode: true,
         deleteGuard: { recursive: 'ask', wildcard: 'ask', unknownTarget: 'ask', high: 'allow', medium: 'allow', thresholds: { maxFiles: 5000, maxBytes: 2048 } },
-        sentinel: { postToUnknownHost: 'allow' },
+        sentinel: { postToUnknownHost: 'allow', runtimeGuard: false, canary: false },
+        scan: { osv: { enabled: false } },
       },
       standard: {
         mode: true,
         deleteGuard: { recursive: 'ask', wildcard: 'ask', unknownTarget: 'ask', critical: 'deny', high: 'ask', medium: 'allow', thresholds: { maxFiles: 1000, maxBytes: 300 } },
-        sentinel: { credentialReads: 'ask', credentialExfil: 'deny', postToUnknownHost: 'ask', downloadToUnknownHost: 'allow', encodedCommand: 'ask', configTamper: 'deny', persistenceWrites: 'ask', dshPluginInstall: 'ask' },
+        sentinel: { credentialReads: 'ask', credentialExfil: 'deny', postToUnknownHost: 'ask', downloadToUnknownHost: 'allow', encodedCommand: 'ask', configTamper: 'deny', persistenceWrites: 'ask', dshPluginInstall: 'ask', runtimeGuard: false, canary: false },
+        scan: { osv: { enabled: false } },
       },
       strict: {
         mode: true,
         deleteGuard: { recursive: 'deny', wildcard: 'deny', unknownTarget: 'deny', critical: 'deny', high: 'deny', medium: 'ask', thresholds: { maxFiles: 200, maxBytes: 50 } },
-        sentinel: { credentialReads: 'deny', credentialExfil: 'deny', postToUnknownHost: 'deny', downloadToUnknownHost: 'ask', encodedCommand: 'deny', configTamper: 'deny', persistenceWrites: 'deny', dshPluginInstall: 'deny' },
+        sentinel: { credentialReads: 'deny', credentialExfil: 'deny', postToUnknownHost: 'deny', downloadToUnknownHost: 'ask', encodedCommand: 'deny', configTamper: 'deny', persistenceWrites: 'deny', dshPluginInstall: 'deny', runtimeGuard: true, canary: true },
+        scan: { osv: { enabled: true } },
       },
     }
 
@@ -3168,7 +3161,7 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
      * ------------------------------------------------------------------ */
 
     /** Remember which settings groups are expanded across re-opens. */
-    const OPEN_GROUPS_KEY = 'dsh-vigil.settings.open-groups'
+    const OPEN_GROUPS_KEY = 'dsh-vigil.settings.open-groups.v2'
 
     /** @returns {Record<string, boolean>} */
     function loadOpenGroups() {
@@ -3179,7 +3172,7 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
       } catch {
         // first run, private mode, or storage disabled
       }
-      return { [GROUPS[0].titleKey]: true }
+      return {}
     }
 
     /** @param {Record<string, boolean>} next */
@@ -4044,19 +4037,7 @@ const JSDELIVR_RULES_MANIFEST = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-v
           applySageRecommended,
           runSageUninstall,
         }),
-h('section', { className: 'dsh-vigil-group dsh-vigil-help', 'data-open': openGroups.help === true ? 'true' : undefined },
-          groupHeader('help', 'helpTitle', openGroups.help === true),
-          openGroups.help === true
-            ? h('div', { className: 'dsh-vigil-group-body' },
-              h('p', { className: 'dsh-vigil-row-description' }, t('helpStatus')),
-              h('p', { className: 'dsh-vigil-row-description' }, t('helpKill')),
-              h('p', { className: 'dsh-vigil-row-description' }, t('helpSage')),
-              h('p', { className: 'dsh-vigil-row-description' }, t('helpLimits')),
-              h('p', { className: 'dsh-vigil-row-description' }, t('labelDeleteNotice')),
-            )
-            : null,
-        ),
-        h(SettingsAbout, { t, open: openGroups.about !== false, groupHeader, version: feedState.data?.version }),
+        h(SettingsAbout, { t, open: openGroups.about === true, groupHeader, version: feedState.data?.version }),
         h('div', { className: 'dsh-vigil-actions' },
           h('span', {
             className: saveState === 'error' ? 'dsh-vigil-error' : saveState === 'saved' ? 'dsh-vigil-ok' : 'dsh-vigil-meta',
@@ -4301,7 +4282,6 @@ h('section', { className: 'dsh-vigil-group dsh-vigil-help', 'data-open': openGro
 .dsh-vigil-audit-clear-session { margin-left: 4px; }
 .dsh-vigil-audit-clear-message { margin: 0; padding: 2px 20px 0; }
 .dsh-vigil-danger-text { color: var(--dsw-alias-state-error-primary); }
-.dsh-vigil-help .dsh-vigil-row-description { margin-top: 2px; }
 .dsh-vigil-dock { box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; width: calc(100% - 2 * var(--dsh-composer-side-clearance, 0px) - 4 * var(--dsh-composer-dock-inset, 0px)); max-width: calc(var(--dsh-composer-card-max-width, 720px) - 4 * var(--dsh-composer-dock-inset, 0px)); margin: 0 auto; color: var(--dsw-alias-label-primary); }
 .dsh-vigil-inline-approval { box-sizing: border-box; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2)); box-shadow: var(--dsw-elevation-panel, var(--dsw-elevation-prominent, 0 2px 8px rgba(0, 0, 0, 0.08))); }
 .dsh-vigil-inline-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; position: relative; }
