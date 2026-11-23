@@ -54,7 +54,7 @@ https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/manifest.js
 | `postToUnknownHost` | `ask` | 向非白名单主机上传数据的决策。 |
 | `downloadToUnknownHost` | `allow` | 从非白名单主机下载内容的决策。 |
 | `allowedHosts` | `[]` | 外发白名单；子域名按规则自动匹配。 |
-| `dynamicRemoteCode` | `deny` | `curl \| sh`、`iwr \| iex`、`Invoke-Expression` 等下载后立即执行模式。旧布尔字段 `denyDynamicRemoteCode` 会迁移。 |
+| `dynamicRemoteCode` | `deny` | `curl \| sh`、`iwr \| iex`、`Invoke-Expression` 等下载后立即执行模式。 |
 | `encodedCommand` | `ask` | `-EncodedCommand`、`base64 -d \| sh` 等编码命令。 |
 | `configTamper` | `deny` | 修改 Harness `.dsh` 配置、沙箱或审批策略。 |
 | `persistenceWrites` | `ask` | 写入 `.bashrc`、`$PROFILE`、启动目录、Run 注册表等持久化位置。 |

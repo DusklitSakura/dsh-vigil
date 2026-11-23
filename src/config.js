@@ -63,7 +63,7 @@ export const DEFAULT_CONFIG = Object.freeze({
     /**
      * Download-and-execute (`curl … | sh`, `iwr … | iex`, Invoke-Expression)
      * decision: deny (default) / ask / allow. The old boolean
-     * `denyDynamicRemoteCode` is migrated to this field.
+     * (No legacy boolean field is supported; 0.0.x had no released users.)
      */
     dynamicRemoteCode: 'deny',
     encodedCommand: 'ask',
@@ -322,27 +322,6 @@ export function resolveConfig(raw) {
     warnings.push('notify.alert 必须是对象；已回退到默认值')
     config.notify.alert = cloneDefault(DEFAULT_CONFIG.notify.alert)
   }
-  // Deprecated boolean -> tri-state decision. A profile that still carries
-  // `denyDynamicRemoteCode` keeps its intent (false meant allow).
-  if (Object.prototype.hasOwnProperty.call(config.sentinel, 'denyDynamicRemoteCode')) {
-    const legacy = config.sentinel.denyDynamicRemoteCode
-    delete config.sentinel.denyDynamicRemoteCode
-    const inputSentinel = isPlainObject(input.sentinel) ? input.sentinel : {}
-    if (!Object.prototype.hasOwnProperty.call(inputSentinel, 'dynamicRemoteCode')) {
-      config.sentinel.dynamicRemoteCode = legacy === false ? 'allow' : 'deny'
-    }
-  }
-
-  // Deprecated default -> GitHub raw. Older profiles persisted the old jsDelivr
-  // default; keeping it would leave users on a cached source they never chose.
-  // The settings page dropdown can switch back to jsDelivr explicitly.
-  const legacyJsdelivrSource = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-vigil@main/rules/manifest.json'
-  if (config.rules && config.rules.source === legacyJsdelivrSource) {
-    // Silent migration: the new default is GitHub raw. A warning here would make
-    // every doctor run report a config failure until the user re-saves settings.
-    config.rules.source = DEFAULT_CONFIG.rules.source
-  }
-
   if (config.mode !== 'enforce' && config.mode !== 'monitor') {
     warnings.push('mode 必须是 enforce 或 monitor；回退到 enforce')
     config.mode = 'enforce'

@@ -146,18 +146,6 @@ test('rules update: the repository manifest is valid and points at the shipped p
   assert.equal(resolveConfig({ rules: { source: '' } }).config.rules.source, '')
 })
 
-test('rules source: the old jsDelivr default migrates to GitHub raw', () => {
-  const old = 'https://cdn.jsdelivr.net/gh/DusklitSakura/dsh-vigil@main/rules/manifest.json'
-  const { config, warnings } = resolveConfig({ rules: { source: old } })
-  assert.equal(
-    config.rules.source,
-    'https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/manifest.json',
-  )
-  // Migration is silent so it does not keep every doctor run in a failed state.
-  assert.equal(warnings.filter(warning => warning.includes('rules.source')).length, 0)
-  const custom = 'https://example.com/my/manifest.json'
-  assert.equal(resolveConfig({ rules: { source: custom } }).config.rules.source, custom)
-})
 
 test('rules update: rule file URLs follow the manifest host', () => {
   const githubManifest = 'https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/manifest.json'

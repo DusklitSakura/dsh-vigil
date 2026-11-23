@@ -1325,15 +1325,6 @@ test('sentinel: dynamicRemoteCode is tri-state and migrates the legacy boolean',
   assert.equal(hitFor(configFor({ sentinel: { dynamicRemoteCode: 'ask' } }))?.kind, 'ask')
   assert.equal(hitFor(configFor({ sentinel: { dynamicRemoteCode: 'allow' } })), undefined)
 
-  // Legacy boolean profiles keep their intent and lose the deprecated key.
-  const legacyOff = resolveConfig({ sentinel: { denyDynamicRemoteCode: false } })
-  assert.equal(legacyOff.config.sentinel.dynamicRemoteCode, 'allow')
-  assert.equal('denyDynamicRemoteCode' in legacyOff.config.sentinel, false)
-  const legacyOn = resolveConfig({ sentinel: { denyDynamicRemoteCode: true } })
-  assert.equal(legacyOn.config.sentinel.dynamicRemoteCode, 'deny')
-  assert.equal(legacyOn.warnings.length, 0)
-  // An explicit new value wins over the legacy boolean.
-  assert.equal(resolveConfig({ sentinel: { denyDynamicRemoteCode: false, dynamicRemoteCode: 'ask' } }).config.sentinel.dynamicRemoteCode, 'ask')
 })
 
 test('yaml subset parser: mappings, sequences and scalars', () => {

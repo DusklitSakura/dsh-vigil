@@ -243,8 +243,7 @@ export function inspectToolCall(exec, config, context) {
   }
 
   // ---- VG-RT-03: remote code is downloaded and executed -------------------
-  const dynamicRemoteCode = sentinel.dynamicRemoteCode
-    ?? (sentinel.denyDynamicRemoteCode === false ? 'allow' : 'deny')
+  const dynamicRemoteCode = sentinel.dynamicRemoteCode ?? 'deny'
   if (dynamicRemoteCode !== 'allow') {
     const downloadToShell = DOWNLOAD_TO_SHELL.test(command ?? '')
     const downloadInvoke = DOWNLOAD_INVOKE.test(command ?? '') && /\b(?:curl|wget|Invoke-WebRequest|iwr|http)\b/i.test(command ?? '')
