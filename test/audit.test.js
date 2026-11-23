@@ -825,3 +825,30 @@ test('fromCharCode and folded literals are decoded and judged like plaintext', a
   for (const finding of hits) assert.equal(finding.confidence, 'confirmed');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+test('credential writes only become blockers when the path is user-scoped', async () => {
+  const dir = tempDir('vigil-cred-scope-')
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'scope-fixture', version: '1.0.0', license: 'MIT', type: 'module', main: './src/index.js' }))
+  fs.writeFileSync(path.join(dir, 'src', 'provision.js'), [
+    "import { writeFileSync } from 'node:fs'",
+    "import { join } from 'node:path'",
+    "export function provision(dir) { writeFileSync(join(dir, '.npmrc'), 'ignore-scripts=true') }",
+    '',
+  ].join('\n'))
+  const report = await scanPluginDirectory(dir)
+  assert.equal(findingByRule(report, 'VG-CRED-05'), undefined, 'a managed .npmrc is not a user credential overwrite')
+})
+
+test('a hint string mentioning iex does not escalate to dynamic-exec + egress', async () => {
+  const dir = tempDir('vigil-hint-scope-')
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'hint-fixture', version: '1.0.0', license: 'MIT', type: 'module', main: './src/index.js' }))
+  fs.writeFileSync(path.join(dir, 'src', 'i18n.js'), [
+    "export const hint = 'curl | sh、iwr | iex、Invoke-Expression 等动态远程代码：拒绝 / 询问 / 允许'",
+    "export const REMOTE = 'https://raw.githubusercontent.com/x/y/main/rules/manifest.json'",
+    "fetch('https://example.com/x')",
+    '',
+  ].join('\n'))
+  const report = await scanPluginDirectory(dir)
+  assert.equal(findingByRule(report, 'VG-DYN-13'), undefined, 'UI copy is not executable context')
+})

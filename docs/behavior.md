@@ -146,6 +146,8 @@ const run = cp.exec
 
 配置篡改规则只针对 Harness 宿主配置位置，例如 `.dsh/profiles`。写入插件自己的 `settings.json` 不应被视为修改宿主安全设置；仅在文案中提到 `~/.dsh` 也不等于读取该目录。
 
+凭证写入同理要看“写给谁”：只有路径带**用户范围证据**（`~`、`homedir()`、`process.env.HOME/USERPROFILE`、`/home/`、`/Users/`、`C:\Users\`）时才按 `VG-CRED-05` blocker 处理；插件写自己受管目录下的 `.npmrc` 等只作为 `VG-CRED-03` review 提示。`iex` / `Invoke-Expression` 只出现在文案或提示字符串里时，也不会升级成「动态执行 + 外发」的 `VG-DYN-13`——组合规则要求动态执行信号来自可执行上下文（eval 调用点或随包脚本）。
+
 ### 3.7 覆盖度、能力清单与升级 diff
 
 - 报告新增 `coverage` 字段：`code / scripts / instructions / patch / manifest / deps / assets` 各自标注 `covered / partial / absent / unreadable / excluded / unsupported`；任一风险面未完整覆盖时产出 **`VG-SCAN-06`**，卡片显示“覆盖度不足”。`deps` 明确标 `unsupported`（扫描器不遍历 `node_modules`）。

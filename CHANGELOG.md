@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+### 修复
+
+- 设置页提示文案里的 `curl | sh` / `iex` / `Invoke-Expression` 被误判为「动态执行 + 外发」blocker（`VG-DYN-13`）：组合升级现在要求动态执行信号来自可执行上下文（eval 调用点或随包脚本），纯文案/提示字符串只会得到 `VG-DYN-15` notice。
+- 插件写自己受管目录下的 `.npmrc`（如 Sage 安装时生成的配置）被误判为覆盖用户凭证（`VG-CRED-05`）：凭证写入只有在路径带用户范围证据时才升级为 blocker，其余按 `VG-CRED-03` review 提示。
+- 新增两条回归测试覆盖上述误报；运行时边界与实现说明同步更新到 `behavior.md`、`limitations.md`、`ARCHITECTURE.md`。
+- 测试基线：390 项测试，覆盖率 lines 87.27 / branches 74.63 / functions 84.41。
+
 ## 0.1.0
 
 ### 新增

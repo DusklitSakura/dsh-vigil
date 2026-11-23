@@ -770,6 +770,20 @@ export function classifySensitivePath(value) {
 }
 
 /**
+ * Whether a credential path is *user-scoped* (`~/.ssh/id_rsa`,
+ * `join(homedir(), '.aws', 'credentials')`, `C:\Users\…`) rather than a
+ * basename the plugin writes inside a directory it manages. Only the former is
+ * a credential-overwrite blocker; `join(dir, '.npmrc')` is normal provisioning.
+ * @param {unknown} value raw code line
+ * @returns {boolean}
+ */
+export function hasUserScopedCredentialPath(value) {
+  const text = String(value ?? '')
+  if (text === '') return false
+  return /(?:~|\bhomedir\b|process\s*\.\s*env\s*\.\s*(?:HOME|USERPROFILE)|\/home\/|\/Users\/|\/root\/|[A-Za-z]:[\\/]{1,2}Users[\\/]|Documents and Settings)/.test(text)
+}
+
+/**
  * Whether a command string is a download-and-execute shape (rule pack driven).
  * @param {unknown} value
  * @returns {{ detail: string } | null}
@@ -1124,7 +1138,7 @@ function emitScriptMatch(add, line, pattern, evidence) {
     return add('VG-DYN-03', line, { evidence, vars: { detail }, confidence: 'confirmed' })
   }
   if (pattern.id === 'VG-DYN-01') {
-    return add('VG-DYN-01', line, { evidence, vars: { detail }, confidence: 'heuristic' })
+    return add('VG-DYN-01', line, { evidence, vars: { detail, executable: true }, confidence: 'heuristic' })
   }
   return undefined
 }
@@ -1443,10 +1457,15 @@ export function scanCodeFile(context) {
 
     // ---- dynamic code execution -----------------------------------------
     if (/(?<![\w$.])eval\s*\(|\bnew\s+Function\s*\(|\bFunction\s*\(\s*['"`]|\.\s*constructor\s*\(\s*['"`]|\(\s*0\s*,\s*eval\s*\)|(?:globalThis|window|self)\s*\[\s*['"`]eval['"`]\s*\]/.test(codeLine)) {
-      add('VG-DYN-01', lineNo, { vars: { detail: 'eval/new Function' }, confidence: 'heuristic' })
+      add('VG-DYN-01', lineNo, { vars: { detail: 'eval/new Function', executable: true }, confidence: 'heuristic' })
     }
     if (/\bInvoke-Expression\b|\biex\s+[^|\s]/i.test(literalLine)) {
-      add('VG-DYN-01', lineNo, { vars: { detail: 'PowerShell Invoke-Expression / iex' }, confidence: 'heuristic' })
+      // A shell word that only appears in a string is copy/hint text unless the
+      // same line feeds a real execution sink; only then may DYN-13 escalate.
+      add('VG-DYN-01', lineNo, {
+        vars: { detail: 'PowerShell Invoke-Expression / iex', executable: EXECUTION_CONTEXT_RE.test(codeLine) },
+        confidence: 'heuristic',
+      })
     }
     if (childProcessImported && (CHILD_PROCESS_IMPORTED_CALL_RE.test(codeLine) || aliasedChildProcessCall(codeLine))) {
       add('VG-DYN-02', lineNo, { vars: { api: 'child_process 调用' }, confidence: 'heuristic' })
@@ -1616,7 +1635,11 @@ export function scanCodeFile(context) {
       }
     }
     const targeted = classifySensitivePath(literalLine)
-    if (destructiveOp && targeted?.kind === 'credential') {
+    // Credential *writes* only escalate when the path is user-scoped. A plugin
+    // writing its own `.npmrc` under a managed directory is not tampering with
+    // the user's credentials; the ambiguous case stays a review (CRED-03).
+    const userScopedTarget = hasUserScopedCredentialPath(literalLine)
+    if (destructiveOp && targeted?.kind === 'credential' && userScopedTarget) {
       add('VG-CRED-05', lineNo, {
         vars: { path: truncateEvidence(targeted.match, 80), op: destructiveOp[1] },
         confidence: 'confirmed',
@@ -1759,7 +1782,11 @@ export function scanCodeFile(context) {
     })
   }
   const dynamicFinding = findings.find((finding) => finding.ruleId === 'VG-DYN-01')
-  if ((hasEgress || findings.some((finding) => finding.ruleId === 'VG-DYN-03')) && dynamicFinding) {
+  // Only escalate to the "download and run" chain when the dynamic-execution
+  // signal comes from executable code (eval call site / shell script), not from
+  // a hint string that merely contains the words `iex` or `Invoke-Expression`.
+  const executableDynamic = dynamicFinding && dynamicFinding.vars?.executable === true
+  if ((hasEgress || findings.some((finding) => finding.ruleId === 'VG-DYN-03')) && executableDynamic) {
     add('VG-DYN-13', dynamicFinding.line, {
       vars: { detail: dynamicFinding.vars?.detail ?? '动态代码执行', host: externalHost || '目标不确定' },
       confidence: 'confirmed',

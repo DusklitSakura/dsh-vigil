@@ -71,10 +71,10 @@ CI workflow 位于 `.github/workflows/ci.yml`：
 
 ## 4. 当前覆盖率快照
 
-`testing.md` 的本地基线记录（2026-11-23 重测，Node 26，388 项测试，阈值 lines 85 / branches 72 / functions 82）：
+`testing.md` 的本地基线记录（2026-11-23 重测，Node 26，390 项测试，阈值 lines 85 / branches 72 / functions 82）：
 
 ```text
-all files    |  87.24 |  74.58 |  84.35 |
+all files    |  87.27 |  74.63 |  84.41 |
              |  lines | branches | functions
 ```
 

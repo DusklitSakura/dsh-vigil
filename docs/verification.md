@@ -8,7 +8,7 @@
 - **操作系统：** Windows 11。
 - **宿主：** DSH Desktop `0.2.2-rc.5`。
 - **测试快照：** `node --test test/` 共 230 项，229 通过、0 失败、1 项因平台条件跳过。
-- **追加快照（2026-11-23，本机）：** `node --test --test-concurrency=1 "test/*.test.js"` 共 388 项，387 通过、0 失败、1 项因平台条件跳过；新增 `test/install-gate.test.js` 14 项（插件页面安装门禁）、`test/rule-contract.test.js` 11 项（规则契约）、`test/route-paths.test.js` 2 项（路由常量与前端调用一致）、`test/client-presets.test.js` 3 项（设置预设与表单字段一致）。
+- **追加快照（2026-11-23，本机）：** `node --test --test-concurrency=1 "test/*.test.js"` 共 390 项，389 通过、0 失败、1 项因平台条件跳过；新增 `test/install-gate.test.js` 14 项（插件页面安装门禁）、`test/rule-contract.test.js` 11 项（规则契约）、`test/route-paths.test.js` 2 项（路由常量与前端调用一致）、`test/client-presets.test.js` 3 项（设置预设与表单字段一致）。
 - **当前包版本记录：** `v0.0.1`。
 
 覆盖率基线另记录于 [testing.md](testing.md)：本地 Node 26 下 lines 85.71%、branches 72.75%、functions 82.81%，满足 85 / 72 / 82 的 CI 门槛。
@@ -75,7 +75,7 @@
 
 ## 8. 自动化测试覆盖
 
-当前 388 项测试涉及：
+当前 390 项测试涉及：
 
 - 静态审计规则、零执行约束与扫描限制；
 - PowerShell / POSIX 删除意图解析；
@@ -125,8 +125,8 @@
 | 检查 | 命令 / 方式 | 结果 |
 | --- | --- | --- |
 | Client 语法 | `node --check client.js` | 通过 |
-| 全量测试 | `node --test --test-concurrency=1 "test/*.test.js"` | 388 项 / 387 通过 / 0 失败 |
-| 覆盖率门槛 | `--test-coverage-lines=85 --branches=72 --functions=82` | 87.24 / 74.58 / 84.35，通过 |
+| 全量测试 | `node --test --test-concurrency=1 "test/*.test.js"` | 390 项 / 389 通过 / 0 失败 |
+| 覆盖率门槛 | `--test-coverage-lines=85 --branches=72 --functions=82` | 87.27 / 74.63 / 84.41，通过 |
 | 规则名册 | `node scripts/rule-audit.mjs --strict` | 71 条规则 · 41 夹具 · 30 豁免 · 0 错误 · 0 欠账 |
 | 静态审计 smoke | `npm run smoke:audit` | 恶意 `postinstall` 样本命中 `VG-SUP-01`，报告可导出 |
 | 删除解析 smoke | `npm run smoke:parser` | PowerShell / cmd / POSIX / 编码命令样本解析符合预期 |
