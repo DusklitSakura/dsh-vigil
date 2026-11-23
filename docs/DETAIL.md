@@ -34,14 +34,14 @@ DSH VIGIL 为 DeepSeek Harness 增加安装审计、运行时危险操作评估�
 | **可选 Sage 引擎** | 可从设置页自动安装 / 更新 Sage 语义规则引擎。未启用时，内置规则仍可独立工作。 |
 | **能力清单与升级 diff** | 报告汇总 `capabilities`（network / exec / credentials / fs-write / install-hooks / patch / client-ui / instructions）；插件可声明 `dsh.capabilities`，升级时新增能力会触发 `VG-SUP-16` 询问，旧版本能力基线记录在状态目录。 |
 | **已知漏洞与官方包信任** | 可选 `scan.osv.enabled` 在安装前查询 OSV（含 lockfile 依赖）；`trust.officialPackages` / `trust.pins` 按内容哈希信任官方包，漂移时询问（`VG-SUP-17`）。 |
-| **运行时进程内守卫与台账** | 可选 `sentinel.runtimeGuard`：拦截插件直接删除 / 覆盖凭证或系统路径与下载即执行（`VG-RT-16` / `VG-RT-17`）；台账按 10 秒窗口识别批量删除、改名加密、写放大、读后覆盖（`VG-RT-18`）。默认关闭，盲区见 [limitations.md](limitations.md) 第 35–40 条。 |
-| **蜜罐 canary** | 可选 `sentinel.canary`：在状态目录埋入带随机令牌的凭据诱饵，出站请求（fetch / http / https）携带该令牌时阻止并确认（`VG-RT-19`）。 |
+| **运行时进程内守卫与台账** | 可选 `sentinel.runtimeGuard`（三态 `allow` / `ask` / `deny`，默认 `allow`）：拦截插件直接删除 / 覆盖凭证或系统路径与下载即执行（`VG-RT-16` / `VG-RT-17`）；`ask` 在同步 API 上按拒绝处理。台账按 10 秒窗口识别批量删除、改名加密、写放大、读后覆盖（`VG-RT-18`）。盲区见 [limitations.md](limitations.md) 第 35–40 条。 |
+| **蜜罐 canary** | 可选 `sentinel.canary`（三态 `allow` / `ask` / `deny`，默认 `allow`）：在状态目录埋入带随机令牌的凭据诱饵，出站请求（fetch / http / https）携带该令牌时确认（`VG-RT-19`）；`ask` 可在 fetch 上弹窗，同步 http 请求按拒绝处理。 |
 | **覆盖度状态** | 报告 `coverage` 字段标注每个风险面的 `covered / partial / absent / unsupported`；不完整时产出 `VG-SCAN-06`，卡片显示“覆盖度不足”。 |
 
 ## 安装与使用
 
 1. 在 **Plugins → Add plugin** 中添加 `dsh-vigil@<版本>`（npm），或固定提交 `github:DusklitSakura/dsh-vigil#<40 位 commit SHA>`。两种方式都会由插件管理器完成安装与后续更新。
-2. 打开 **Settings → 守夜人**，检查运行模式、规则决策、删除阈值、隔离区、审计与可选 Sage 设置；需要时再打开 OSV 已知漏洞查询、官方包信任、进程内运行时守卫或蜜罐 canary（均默认关闭）。
+2. 打开 **Settings → 守夜人**，检查运行模式、规则决策、删除阈值、隔离区、审计与可选 Sage 设置；需要时再配置 OSV 已知漏洞查询、官方包信任、进程内运行时守卫或蜜罐 canary（后两者是三态决策，默认 `allow` 关闭）。
 3. 在会话工具列表中使用 `vigil_scan`、`vigil_status`、`vigil_doctor`、`vigil_audit`、`vigil_quarantine`、`vigil_rules`、`vigil_integrity` 与 `vigil_sage`。
 
 常用工具说明见 [tools.md](tools.md)，完整安装步骤见 [install.md](install.md)。

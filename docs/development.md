@@ -28,9 +28,9 @@ dsh-vigil/
 │   │   ├── hook.js           # tools/pre-execute 决策入口
 │   │   ├── rules.js          # VG-RT-* 运行时规则
 │   │   ├── guard.js          # 插件自身与状态目录自保护
-│   │   ├── runtime-guard.js  # 进程内 fs / child_process 守卫（默认关闭）
-│   │   ├── runtime-ledger.js # 破坏签名台账（默认关闭）
-│   │   ├── canary.js         # 蜜罐诱饵与出站检查（默认关闭）
+│   │   ├── runtime-guard.js  # 进程内 fs / child_process 守卫（三态，默认 allow）
+│   │   ├── runtime-ledger.js # 破坏签名台账（随守卫启用）
+│   │   ├── canary.js         # 蜜罐诱饵与出站检查（三态，默认 allow）
 │   │   ├── sage.js           # Sage 适配层
 │   │   └── sage-load.js      # Sage 引擎加载校验
 │   ├── audit/                # 安装前静态审计、规则与结果叙事

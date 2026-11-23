@@ -62,7 +62,7 @@ Client 的所有状态读取与操作都应通过 `connection.fetch` 注册的�
 | `src/delete/` | 删除意图解析、保护根分级、规模估算、隔离区 | 仅明确且可恢复的字面目标可进入隔离区；复杂目标不猜测、不移动。 |
 | `src/audit/` | 安装前静态审计：扫描、规则目录、风险叙事、安装目标解析与 AST 别名分析 | **不得 import 或执行被扫描代码。** 报告应定位文件、行号与证据。 |
 | `src/audit/{advisories,dep-advisories,semver-range}.js` | OSV 响应归一化 / 查询、lockfile 依赖解析、`engines.node` 语义化范围匹配 | 扫描保持离线；网络查询只发生在安装门禁；不可解析版本返回 unknown 而不是猜测。 |
-| `src/sentinel/runtime-guard.js` | 进程内 fs 写删 / child_process 守卫（默认关闭） | 只拦不可逆操作；attach / detach 成对；跳过本包自身的审计写调用。 |
+| `src/sentinel/runtime-guard.js` | 进程内 fs 写删 / child_process 守卫（三态，默认 `allow`） | 只拦不可逆操作；`ask` 仅在异步路径弹窗，同步 API 按拒绝；attach / detach 成对；跳过本包自身的审计写调用。 |
 | `src/sentinel/runtime-ledger.js` | 破坏签名台账（批量删除 / 改名加密 / 写放大 / 读后覆盖） | 只观测不改判定；窗口与阈值以常量导出便于测试。 |
 | `src/sentinel/canary.js` | 蜜罐诱饵令牌与出站检查 | 令牌只存在内存 + 状态目录诱饵文件；命中即确认外泄，不用于推断。 |
 | `src/install-gate.js`、`src/install-baseline.js`、`src/trust.js`、`src/trust-store.js` | 本地安装门禁：静态审计、OSV、内容哈希信任、升级能力 diff 与基线 | 查询失败按“未知”；接受哈希漂移不得覆写 pin；安装成功后才写基线 / pin。 |
@@ -245,7 +245,7 @@ Feed 默认提供最近 300 条决策记录，再由 Client 按 session 投影�
 26. Acorn AST 是可选增强；解析失败或依赖缺失必须回退正则，不得中断扫描主流程；AST 等级映射只能提高、不能降低既有严重度。
 27. 自保护应判断解析后的真实目标；仅在命令文本中出现受保护路径不应触发拒绝。运行时无法解析的目标须标记为 unresolved 并采用保守文本检查。
 28. 规则等级以 catalog 为唯一事实来源：blocker 必须 `confirmed`；组合 / 上下文事实拆独立 id，检测器不得就地改写严重度。
-29. 进程内守卫、蜜罐与台账默认关闭；`attach()` 与 `detach()` 必须成对，且不得拦截本包自己的审计写入。
+29. 进程内守卫与蜜罐是三态决策（默认 `allow`），台账默认关闭；`attach()` 与 `detach()` 必须成对，且不得拦截本包自己的审计写入。`ask` 在同步 API 上必须 fail-closed。
 30. 官方包信任是 TOFU：接受哈希漂移的安装不得覆写 pin；首次接受后才写入，手工 `pnpm add` 不更新 pin。
 31. OSV / 依赖查询失败按“未知”处理，不得阻止安装门禁超过预算，也不得当成干净。
 32. 扫描报告必须诚实标注 `coverage`；无法覆盖的风险面产出 `VG-SCAN-06`，不得把“未扫描到”表述为“无风险”。

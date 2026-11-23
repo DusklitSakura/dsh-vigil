@@ -64,14 +64,14 @@
 > [!NOTE]
 > 上述规则基于命令与参数文本匹配，不执行命令。若命令只是 grep、搜索或展示包含 `diskpart` 等词语的文档，也可能匹配；遇到误报时应检查规则锚点与上下文，不要把命中视为已证明存在恶意行为。
 
-### 2.5 进程内运行时守卫（默认关闭）
+### 2.5 进程内运行时守卫（三态，默认 `allow`）
 
-开启 `sentinel.runtimeGuard` 后，插件在宿主进程内直接调用以下 API 会被拦截：
+把 `sentinel.runtimeGuard` 设为 `ask` 或 `deny` 后，插件在宿主进程内直接调用以下 API 会被拦截：
 
 - `fs.unlink/rm/rmdir/writeFile/appendFile/rename/copyFile/truncate`（含 `Sync` 与 `fs.promises`）作用在凭证文件或系统路径上 → 阻止并审计 `VG-RT-16`；
 - `child_process.exec/execFile/spawn/fork` 的命令文本命中下载即执行模式 → 阻止并审计 `VG-RT-17`。
 
-这些 API 大多是同步的，等不了对话内审批，因此策略是直接拒绝而不是询问；调用方会收到 `VigilRuntimeBlock`。守卫会跳过来自本包 `src/` 的调用（否则审计写日志会被自己拦死）。盲区：ESM 命名导入（`import { unlinkSync } from 'node:fs'`）在守卫安装前已绑定、`worker_threads`、原生模块与插件拉起的子进程都拦不到。
+`deny` 直接拒绝；`ask` 只在可异步等待的路径（`fs.promises`）上弹窗，同步 `fs` / `child_process` 无法等待确认，按拒绝处理并在审计里注明。被拒绝的调用方会收到 `VigilRuntimeBlock`。守卫会跳过来自本包 `src/` 的调用（否则审计写日志会被自己拦死）。盲区：ESM 命名导入（`import { unlinkSync } from 'node:fs'`）在守卫安装前已绑定、`worker_threads`、原生模块与插件拉起的子进程都拦不到。
 
 ### 2.6 破坏签名台账
 
@@ -84,9 +84,9 @@
 
 命中写 `runtime-ledger` 审计记录（`VG-RT-18`）。只观测、不改判定：批量清理缓存和勒索在单次调用上无法区分，台账负责事后可解释。
 
-### 2.7 蜜罐 canary（默认关闭）
+### 2.7 蜜罐 canary（三态，默认 `allow`）
 
-开启 `sentinel.canary` 后，每次运行时生成都会在状态目录写一份凭据形状的诱饵文件（内含随机令牌，令牌每进程轮换）。运行时守卫检查 `fetch` 与 `http/https` 的 `request/get`：URL、options、headers 中出现同一令牌即阻止并确认外泄（`VG-RT-19`）。令牌只存在于内存与诱饵文件，正常流量不可能携带。盲区：`net`、请求体流、子进程外发与编码后的载荷看不到。
+把 `sentinel.canary` 设为 `ask` 或 `deny` 后，每次运行时生成都会在状态目录写一份凭据形状的诱饵文件（内含随机令牌，令牌每进程轮换）。运行时守卫检查 `fetch` 与 `http/https` 的 `request/get`：URL、options、headers 中出现同一令牌即确认外泄（`VG-RT-19`）。`deny` 直接阻止；`ask` 在 `fetch` 上弹窗等确认，`http.request` 是同步 API，按拒绝处理。令牌只存在于内存与诱饵文件，正常流量不可能携带。盲区：`net`、请求体流、子进程外发与编码后的载荷看不到。
 
 ## 3. 路径与命令语义
 

@@ -11,7 +11,7 @@
 - **安装门禁扩展**：`engines.node` 兼容检查（`VG-SUP-18`）、zombie 依赖（`VG-SUP-19`）、能力声明一致性。
 - **静态规则**：指令 / 技能文件注入（`VG-INJ-07`）、特权 ctx 成员（`VG-INJ-08`）、进程逃逸（`VG-DYN-07`）、原型污染（`VG-DYN-08`）、超大分配（`VG-DYN-09`）、系统路径破坏（`VG-DYN-11`）、编码 / 拼接载荷（`VG-DYN-12`）、动态执行 + 外发（`VG-DYN-13`）、远程动态导入（`VG-DYN-14`）、死循环 / ReDoS（`VG-DYN-16`）。
 - **组合规则拆分**：`VG-CRED-06` / `VG-CRED-07`、`VG-CFG-05`、`VG-DSH-07`——blocker 一律 confirmed，检测器不再就地改写严重度。
-- **运行时纵深防御（默认关闭）**：进程内 fs / child_process 守卫（`VG-RT-16` / `VG-RT-17`）、破坏签名台账（`VG-RT-18`）、蜜罐 canary（`VG-RT-19`，覆盖 fetch 与 http/https）。
+- **运行时纵深防御（三态 `allow` / `ask` / `deny`，默认 `allow`）**：进程内 fs / child_process 守卫（`VG-RT-16` / `VG-RT-17`）、破坏签名台账（`VG-RT-18`）、蜜罐 canary（`VG-RT-19`，覆盖 fetch 与 http/https）。同步 API 在 `ask` 下按拒绝处理。
 - **设置页**：新增 `list` 字段类型、「官方包信任」分组、OSV / 运行时守卫 / 蜜罐开关。
 
 ### 变更
@@ -31,7 +31,7 @@
 ### 说明
 
 - 本次为功能版本，默认行为保持离线：OSV、官方包信任、运行时守卫、蜜罐均需显式启用。
-- 测试基线：386 项测试，覆盖率 lines 87.23 / branches 74.56 / functions 84.30。
+- 测试基线：389 项测试，覆盖率 lines 87.25 / branches 74.58 / functions 84.35。
 
 ## 0.0.2
 

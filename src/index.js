@@ -343,7 +343,7 @@ export async function apply(ctx, config) {
         // Canary: a bait file under the state dir whose token is watched in
         // outbound requests. Planted per generation so the token rotates.
         let canary = null
-        if (next.config.sentinel.canary === true) {
+        if (next.config.sentinel.canary !== 'allow') {
           try {
             canary = createCanary({ stateDir: next.config.paths.stateDir })
             if (!canary.plant()) {
@@ -355,11 +355,11 @@ export async function apply(ctx, config) {
             canary = null
           }
         }
-        // In-process guard: only installed when `sentinel.runtimeGuard` is on.
+        // In-process guard: installed when `sentinel.runtimeGuard` is ask/deny.
         // It is recreated per generation so its wrappers record into the new
         // audit sink; the previous generation's wrappers are removed first.
         try {
-          const guardState = createRuntimeGuard({ config: next.config, audit: next.audit, logger, canary }).attach()
+          const guardState = createRuntimeGuard({ config: next.config, audit: next.audit, approval: approvalQueue, logger, canary }).attach()
           next.runtimeGuard = guardState
         } catch (error) {
           logger.warn(`[dsh-vigil] 运行时守卫挂载失败：${String(error)}`)

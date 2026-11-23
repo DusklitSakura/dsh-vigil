@@ -8,7 +8,7 @@
 - **操作系统：** Windows 11。
 - **宿主：** DSH Desktop `0.2.2-rc.5`。
 - **测试快照：** `node --test test/` 共 230 项，229 通过、0 失败、1 项因平台条件跳过。
-- **追加快照（2026-11-23，本机）：** `node --test --test-concurrency=1 "test/*.test.js"` 共 386 项，385 通过、0 失败、1 项因平台条件跳过；新增 `test/install-gate.test.js` 14 项（插件页面安装门禁）、`test/rule-contract.test.js` 11 项（规则契约）、`test/route-paths.test.js` 2 项（路由常量与前端调用一致）、`test/client-presets.test.js` 3 项（设置预设与表单字段一致）。
+- **追加快照（2026-11-23，本机）：** `node --test --test-concurrency=1 "test/*.test.js"` 共 389 项，388 通过、0 失败、1 项因平台条件跳过；新增 `test/install-gate.test.js` 14 项（插件页面安装门禁）、`test/rule-contract.test.js` 11 项（规则契约）、`test/route-paths.test.js` 2 项（路由常量与前端调用一致）、`test/client-presets.test.js` 3 项（设置预设与表单字段一致）。
 - **当前包版本记录：** `v0.0.1`。
 
 覆盖率基线另记录于 [testing.md](testing.md)：本地 Node 26 下 lines 85.71%、branches 72.75%、functions 82.81%，满足 85 / 72 / 82 的 CI 门槛。
@@ -75,7 +75,7 @@
 
 ## 8. 自动化测试覆盖
 
-当前 386 项测试涉及：
+当前 389 项测试涉及：
 
 - 静态审计规则、零执行约束与扫描限制；
 - PowerShell / POSIX 删除意图解析；
@@ -85,7 +85,7 @@
 - 安装监听、新增 / 更新差分与手动重扫；
 - 插件页面安装门禁：服务方法包装、blocker 询问、拒绝抛错、放行透传、工具路径去重与卸载还原；
 - 规则契约：71 条 `VG-*` 的名册一致性、41 条夹具的精确命中集合与等级/行号/文案校验；所有 blocker 均为 confirmed；
-- 进程内运行时守卫、破坏台账与蜜罐 canary（默认关闭）：拦截 / 放行 / 审计与 detach 还原；
+- 进程内运行时守卫与蜜罐 canary（三态，默认 `allow`）：`deny` 拦截、`ask` 弹窗 / 同步回退、放行与 audit、detach 还原；破坏台账四类签名；
 - 安装门禁扩展：OSV（包本体 + lockfile 依赖）、官方包内容哈希与 TOFU、升级能力 diff、覆盖率状态；
 - 解码扩展：`fromCharCode` 与常量拼接、`engines.node` 语义化范围、解构 / 别名 fs 调用；
 - Sage 安装、升级、版本解析、失败回滚与评估范围；
@@ -101,7 +101,7 @@
 - 插件详情页与图标在所有宿主主题 / 窗口尺寸下的完整视觉表现；
 - 插件页面本地路径安装的确认框在真实 GUI 中的一次完整点击（集成测试覆盖了包装、裁决与去重，未在运行中的宿主里点过）。
 - 所有 PowerShell / POSIX / cmd 语法变体、脚本内部删除与运行时动态命令。
-- 进程内守卫与蜜罐在真实宿主里启用后的长期行为（当前只在单元 / 集成测试中验证；默认关闭，未在运行中的 profile 打开）。
+- 进程内守卫与蜜罐在真实宿主里启用后的长期行为（当前只在单元 / 集成测试中验证；默认 `allow`，未在运行中的 profile 打开）。
 - OSV 查询与官方包 TOFU 在真实网络 / 真实官方包上的表现（测试用假 fetch 与临时目录）。
 - `trust.pins` 多行字段在真实浏览器里的粘贴 / 回填体验（Client 手动清单含该项，尚未逐项点击）。
 
@@ -125,8 +125,8 @@
 | 检查 | 命令 / 方式 | 结果 |
 | --- | --- | --- |
 | Client 语法 | `node --check client.js` | 通过 |
-| 全量测试 | `node --test --test-concurrency=1 "test/*.test.js"` | 386 项 / 385 通过 / 0 失败 |
-| 覆盖率门槛 | `--test-coverage-lines=85 --branches=72 --functions=82` | 87.23 / 74.56 / 84.30，通过 |
+| 全量测试 | `node --test --test-concurrency=1 "test/*.test.js"` | 389 项 / 388 通过 / 0 失败 |
+| 覆盖率门槛 | `--test-coverage-lines=85 --branches=72 --functions=82` | 87.25 / 74.58 / 84.35，通过 |
 | 规则名册 | `node scripts/rule-audit.mjs --strict` | 71 条规则 · 41 夹具 · 30 豁免 · 0 错误 · 0 欠账 |
 | 静态审计 smoke | `npm run smoke:audit` | 恶意 `postinstall` 样本命中 `VG-SUP-01`，报告可导出 |
 | 删除解析 smoke | `npm run smoke:parser` | PowerShell / cmd / POSIX / 编码命令样本解析符合预期 |

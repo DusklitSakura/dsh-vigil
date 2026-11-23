@@ -71,10 +71,10 @@ CI workflow 位于 `.github/workflows/ci.yml`：
 
 ## 4. 当前覆盖率快照
 
-`testing.md` 的本地基线记录（2026-11-23 重测，Node 26，386 项测试，阈值 lines 85 / branches 72 / functions 82）：
+`testing.md` 的本地基线记录（2026-11-23 重测，Node 26，389 项测试，阈值 lines 85 / branches 72 / functions 82）：
 
 ```text
-all files    |  87.23 |  74.57 |  84.30 |
+all files    |  87.25 |  74.58 |  84.35 |
              |  lines | branches | functions
 ```
 
@@ -94,7 +94,7 @@ all files    |  87.23 |  74.57 |  84.30 |
 7. **审批提醒：** 切到其他窗口触发 ask，分别验证提示音、Windows 通知与 DSH 窗口提醒；处理后或重新聚焦时，临时置顶 / 闪烁停止。
 8. **破坏性操作：** `format D:`、`reg delete HKLM\... /f`、`vssadmin delete shadows` 应按默认策略拒绝；`docker system prune`、`git push --force`、`DROP DATABASE` 应按默认策略进入询问。注意这些是规则路径的验收样例，不代表对任意变体都完整覆盖。
 9. **官方包信任列表：** 在「官方包信任」分组里分别粘贴多行名称与 `name@version=sha256`，保存后刷新页面确认按行回填；格式错误（非 64 位十六进制）不应被当作有效 pin。
-10. **运行时守卫 / 蜜罐开关：** 打开后确认设置页文案与默认关闭一致；关闭状态下不应影响普通插件调用（可在测试插件里调用临时文件删除验证放行）。
+10. **运行时守卫 / 蜜罐决策：** 三个选项（allow / ask / deny）都能保存并回显；`allow` 下不应影响普通插件调用（可在测试插件里调用临时文件删除验证放行）；`ask` 在同步 API 上应提示“无法等待确认，按拒绝处理”。
 
 触发方式可通过设置页改配置、`plugin_manager install_bundle` 安装 / 更新插件，或提交一个按当前策略会进入 ask 的测试命令。不要在真实数据目录执行破坏性测试。
 

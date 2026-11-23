@@ -83,9 +83,10 @@ export const DEFAULT_CONFIG = Object.freeze({
     destructiveData: 'ask',
     /** Extra tool names that are audited but never blocked. */
     /** In-process guard over destructive fs / download-and-exec calls (off by default). */
-    runtimeGuard: false,
-    /** Plant a credential-shaped bait file and watch outbound requests for its token. */
-    canary: false,
+    /** allow = off, ask/deny = enforce (sync APIs fall back to deny for ask). */
+    runtimeGuard: 'allow',
+    /** allow = do not plant/watch, ask/deny = confirm or block a token leak. */
+    canary: 'allow',
     allowTools: [],
   },
   deleteGuard: {
@@ -384,6 +385,13 @@ function cloneDefault(value) {
  * @param {string[]} warnings
  */
 function validateDecisionFields(config, warnings) {
+  // Old boolean switches -> tri-state decisions (true meant block).
+  for (const field of ['runtimeGuard', 'canary']) {
+    if (typeof config.sentinel[field] === 'boolean') {
+      config.sentinel[field] = config.sentinel[field] ? 'deny' : 'allow'
+    }
+  }
+  /** @type {Array<[any, string, string, any]>} */
   /** @type {Array<[any, string, string, any]>} */
   const fields = [
     [config.sentinel, 'credentialReads', 'sentinel.credentialReads', DEFAULT_CONFIG.sentinel.credentialReads],
@@ -395,6 +403,8 @@ function validateDecisionFields(config, warnings) {
     [config.sentinel, 'configTamper', 'sentinel.configTamper', DEFAULT_CONFIG.sentinel.configTamper],
     [config.sentinel, 'persistenceWrites', 'sentinel.persistenceWrites', DEFAULT_CONFIG.sentinel.persistenceWrites],
     [config.sentinel, 'dshPluginInstall', 'sentinel.dshPluginInstall', DEFAULT_CONFIG.sentinel.dshPluginInstall],
+    [config.sentinel, 'runtimeGuard', 'sentinel.runtimeGuard', DEFAULT_CONFIG.sentinel.runtimeGuard],
+    [config.sentinel, 'canary', 'sentinel.canary', DEFAULT_CONFIG.sentinel.canary],
     [config.deleteGuard, 'recursive', 'deleteGuard.recursive', DEFAULT_CONFIG.deleteGuard.recursive],
     [config.deleteGuard, 'wildcard', 'deleteGuard.wildcard', DEFAULT_CONFIG.deleteGuard.wildcard],
     [config.deleteGuard, 'unknownTarget', 'deleteGuard.unknownTarget', DEFAULT_CONFIG.deleteGuard.unknownTarget],

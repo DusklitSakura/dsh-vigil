@@ -52,7 +52,7 @@ const FS_PROMISE_OPS = ['unlink', 'rm', 'rmdir', 'writeFile', 'appendFile', 'ren
 const CP_OPS = ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync', 'fork']
 
 /**
- * @param {{ config?: any, audit?: any, logger?: { warn?: (message: string) => void }, fsModule?: any, childProcessModule?: any }} options
+ * @param {{ config?: any, audit?: any, approval?: any, logger?: { warn?: (message: string) => void }, fsModule?: any, childProcessModule?: any }} options
  */
 export function createRuntimeGuard(options = {}) {
   const config = options.config
@@ -63,13 +63,64 @@ export function createRuntimeGuard(options = {}) {
   const fetchOwner = options.fetchTarget ?? globalThis
   const httpModules = options.httpModules ?? [[http, 'http'], [https, 'https']]
   const canary = options.canary ?? null
+  const approval = options.approval ?? null
   /** @type {{ owner: any, name: string, original: Function, promises?: boolean }[]} */
   const patches = []
   const ledger = options.ledger ?? createRuntimeLedger()
   const stats = { blocked: 0, ledgerEvents: 0 }
   let detached = false
 
-  const enabled = () => !detached && config?.sentinel?.runtimeGuard === true
+  const guardDecision = () => {
+    const value = config?.sentinel?.runtimeGuard
+    return value === 'ask' || value === 'deny' ? value : null
+  }
+  const canaryDecision = () => {
+    const value = config?.sentinel?.canary
+    return value === 'ask' || value === 'deny' ? value : null
+  }
+  const enabled = () => !detached && guardDecision() !== null
+
+  /**
+   * Ask through the shared approval queue. Synchronous APIs cannot await this,
+   * so callers only use it on promise-returning paths; a missing queue or a
+   * rejected answer is a denial (fail-closed).
+   * @param {string} tool
+   * @param {string} ruleId
+   * @param {string} message
+   * @param {Record<string, unknown>} extra
+   * @returns {Promise<boolean>}
+   */
+  async function askApproval(tool, ruleId, message, extra) {
+    if (!approval || typeof approval.request !== 'function') return false
+    try {
+      const answer = await approval.request({
+        tool,
+        command: null,
+        code: null,
+        reason: message,
+        ruleIds: [ruleId],
+        sessionId: null,
+      })
+      if (answer?.action !== 'allow') return false
+      try {
+        audit?.record({
+          kind: 'decision',
+          event: 'runtime-guard',
+          tool,
+          session: null,
+          decision: 'ask',
+          ruleIds: [ruleId],
+          reason: message,
+          extra: { ...extra, approved: true },
+        })
+      } catch {
+        // auditing is best-effort
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
 
   /**
    * The first stack frame outside this wrapper. A frame from this package means
@@ -152,12 +203,28 @@ export function createRuntimeGuard(options = {}) {
           }
           const verdict = classifySensitivePath(text)
           if (verdict) {
-            const error = blockError(`fs.${name}`, 'VG-RT-16', `插件代码直接对${verdict.kind === 'credential' ? '凭证文件' : '系统路径'}执行 ${name}`, {
+            const decision = guardDecision()
+            const tool = `fs.${name}`
+            const message = `插件代码直接对${verdict.kind === 'credential' ? '凭证文件' : '系统路径'}执行 ${name}`
+            const extra = {
               path: text.slice(0, 240),
               kind: verdict.kind,
               caller: frame.trim().slice(0, 200),
               viaPromises: promises,
-            })
+              decision,
+            }
+            // fs.promises can wait for the in-conversation dialog; plain fs
+            // cannot, so ask degrades to deny there (fail-closed).
+            if (promises && decision === 'ask') {
+              return (async () => {
+                if (!(await askApproval(tool, 'VG-RT-16', message, extra))) {
+                  throw blockError(tool, 'VG-RT-16', message, extra)
+                }
+                return original.apply(this, args)
+              })()
+            }
+            const askFallback = decision === 'ask' ? '（同步调用无法等待确认，按拒绝处理）' : ''
+            const error = blockError(tool, 'VG-RT-16', message + askFallback, extra)
             // A promise-returning API must reject, not throw: callers chain
             // .catch() and would otherwise miss a synchronous error.
             if (promises) return Promise.reject(error)
@@ -200,7 +267,10 @@ export function createRuntimeGuard(options = {}) {
       if (!isInternal(frame)) {
         const hit = matchesDownloadExec(commandText(name, args))
         if (hit) {
-          throw blockError(`child_process.${name}`, 'VG-RT-17', `插件代码执行下载后立即执行的命令：${hit.detail}`, {
+          const decision = guardDecision()
+          const askFallback = decision === 'ask' ? '（同步调用无法等待确认，按拒绝处理）' : ''
+          throw blockError(`child_process.${name}`, 'VG-RT-17', `插件代码执行下载后立即执行的命令：${hit.detail}${askFallback}`, {
+            decision,
             command: commandText(name, args).slice(0, 240),
             caller: frame.trim().slice(0, 200),
           })
@@ -223,27 +293,34 @@ export function createRuntimeGuard(options = {}) {
 
   /** Install the wrappers. No-op when the switch is off. */
   function attach() {
-    if (!enabled()) return { attached: false, detach: () => {}, stats }
-    for (const name of FS_WRITE_OPS) patch(fsModule, name, (op, original) => wrapFs(op, original, false))
-    const promises = fsModule?.promises
-    if (promises) {
-      for (const name of FS_PROMISE_OPS) patch(promises, name, (op, original) => wrapFs(op, original, true), { promises: true })
+    const guardOn = enabled()
+    const canaryOn = canaryDecision() !== null
+    if (!guardOn && !canaryOn) return { attached: false, detach: () => {}, stats }
+    if (guardOn) {
+      for (const name of FS_WRITE_OPS) patch(fsModule, name, (op, original) => wrapFs(op, original, false))
+      const promises = fsModule?.promises
+      if (promises) {
+        for (const name of FS_PROMISE_OPS) patch(promises, name, (op, original) => wrapFs(op, original, true), { promises: true })
+      }
+      for (const name of CP_OPS) patch(cpModule, name, wrapChildProcess)
+      for (const name of FS_READ_OPS) patch(fsModule, name, wrapFsRead)
     }
-    for (const name of CP_OPS) patch(cpModule, name, wrapChildProcess)
-    for (const name of FS_READ_OPS) patch(fsModule, name, wrapFsRead)
     // http/https carry the same canary check as fetch. Request bodies are
     // streams, so only URL/options/headers are inspected (documented limit).
-    if (canary) {
+    if (canaryOn && canary) {
       for (const [module, moduleName] of httpModules) {
         if (!module || typeof module.request !== 'function') continue
         for (const name of ['request', 'get']) {
           const original = module[name]
           if (typeof original !== 'function') continue
           const guarded = function guardedHttp(...args) {
-            if (enabled() && canary.inspect(args[0], args[1], args[0]?.url, args[0]?.path, args[1]?.path, args[1]?.headers)) {
-              throw blockError(`http.${name}`, 'VG-RT-19', `出站 ${moduleName} 请求携带蜜罐诱饵值`, {
+            const decision = canaryDecision()
+            if (decision && canary.inspect(args[0], args[1], args[0]?.url, args[0]?.path, args[1]?.path, args[1]?.headers)) {
+              const askFallback = decision === 'ask' ? '（http 请求无法等待确认，按拒绝处理）' : ''
+              throw blockError(`http.${name}`, 'VG-RT-19', `出站 ${moduleName} 请求携带蜜罐诱饵值${askFallback}`, {
                 module: moduleName,
                 bait: canary.baitPath ?? null,
+                decision,
               }, 'runtime-canary')
             }
             return original.apply(this, args)
@@ -259,20 +336,24 @@ export function createRuntimeGuard(options = {}) {
     }
     // Canary: only outbound requests are watched. A token that never leaves the
     // process cannot prove exfiltration, so nothing else is inspected.
-    if (canary && typeof fetchOwner?.fetch === 'function') {
+    if (canaryOn && canary && typeof fetchOwner?.fetch === 'function') {
       const originalFetch = fetchOwner.fetch
       const guardedFetch = async function guardedFetch(input, init) {
-        if (enabled() && canary.inspect(input, init?.body, init?.headers)) {
+        if (canaryDecision() && canary.inspect(input, init?.body, init?.headers)) {
           let host = ''
           try {
             host = new URL(typeof input === 'string' ? input : String(input?.url ?? '')).host
           } catch {
             host = ''
           }
-          throw blockError('fetch', 'VG-RT-19', `出站请求携带蜜罐诱饵值（目标 ${host || '未知'}），确认为凭证外泄`, {
-            host,
-            bait: canary.baitPath ?? null,
-          }, 'runtime-canary')
+          const tool = 'fetch'
+          const message = `出站请求携带蜜罐诱饵值（目标 ${host || '未知'}），确认为凭证外泄`
+          const extra = { host, bait: canary.baitPath ?? null, decision: canaryDecision() }
+          // fetch is promise-returning, so an in-conversation dialog is possible.
+          if (canaryDecision() === 'ask' && await askApproval(tool, 'VG-RT-19', message, extra)) {
+            return originalFetch.apply(this, arguments)
+          }
+          throw blockError(tool, 'VG-RT-19', message, extra, 'runtime-canary')
         }
         return originalFetch.apply(this, arguments)
       }

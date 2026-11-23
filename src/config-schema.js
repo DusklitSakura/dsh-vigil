@@ -73,8 +73,8 @@ function buildSchema(schema) {
     dshPluginInstall: decision('ask').volatile().description('通过工具安装/移除插件的决策'),
     destructiveSystem: decision('deny').volatile().description('不可逆的系统破坏性操作（格盘/注册表/卷影/事件日志/安全防护关闭/证书等）'),
     destructiveData: decision('ask').volatile().description('大规模数据破坏操作（数据库/容器/云资源/Git 历史等）'),
-    canary: flag(false).volatile().description('埋入蜜罐诱饵值并检查出站请求是否携带它；命中即确认为凭证外泄（默认关闭）'),
-    runtimeGuard: flag(false).volatile().description('拦截插件代码在进程内直接删除/覆盖凭证或系统路径，以及下载即执行的命令（默认关闭；启用前请读 limitations）'),
+    canary: decision('allow').volatile().description('蜜罐：allow 关闭；ask 命中时询问（http 同步请求按拒绝处理）；deny 直接阻止'),
+    runtimeGuard: decision('allow').volatile().description('进程内守卫：allow 关闭；ask 命中时询问（同步 API 按拒绝处理）；deny 直接阻止'),
     allowTools: list([]).volatile(),
   })
 

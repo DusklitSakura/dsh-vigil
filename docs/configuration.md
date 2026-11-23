@@ -46,8 +46,8 @@ https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/manifest.js
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `sentinel.enabled` | `true` | 是否挂载 `tools/pre-execute` 运行时哨兵。 |
-| `sentinel.runtimeGuard` | `false` | 进程内守卫：包裹 `fs` 写 / 删族与 `child_process`，拦截插件直接删除 / 覆盖凭证或系统路径（`VG-RT-16`）与下载即执行（`VG-RT-17`）。盲区见 [limitations.md](limitations.md) 第 35 条。 |
-| `sentinel.canary` | `false` | 蜜罐：在状态目录写入凭据形状诱饵，检查 fetch 与 http/https 出站请求是否携带令牌，命中即确认外泄（`VG-RT-19`）。盲区见 [limitations.md](limitations.md) 第 37 条。 |
+| `sentinel.runtimeGuard` | `allow` | 进程内守卫（三态）：`allow` 关闭；`ask` 命中时询问（同步 API 无法等待确认，按拒绝处理）；`deny` 直接阻止。包裹 `fs` 写 / 删族与 `child_process`，命中凭证 / 系统路径（`VG-RT-16`）与下载即执行（`VG-RT-17`）。盲区见 [limitations.md](limitations.md) 第 35 条。 |
+| `sentinel.canary` | `allow` | 蜜罐（三态）：`allow` 关闭；`ask` 命中时询问（http 同步请求按拒绝处理）；`deny` 直接阻止。在状态目录写入凭据形状诱饵，检查 fetch 与 http/https 出站请求是否携带令牌，命中即确认外泄（`VG-RT-19`）。盲区见 [limitations.md](limitations.md) 第 37 条。 |
 | `credentialReads` | `ask` | 读取 `.ssh`、`.aws`、`.npmrc`、`.pem`、`.env` 等凭证材料时的决策。 |
 | `credentialExfil` | `deny` | 同一调用同时读取凭证并向外发送数据时的决策。 |
 | `suspiciousHosts` | 内置 13 个主机模式 | 文件分享、paste 与隧道站点等可疑目的地主机；命中默认拒绝。 |
@@ -65,7 +65,7 @@ https://raw.githubusercontent.com/DusklitSakura/dsh-vigil/main/rules/manifest.js
 
 `destructiveSystem` 与 `destructiveData` 的匹配模式分别位于 `rules/sentinel.yaml` 的 `destructiveSystemPatterns` 与 `destructiveDataPatterns`。规则基于命令 / 参数文本，不是命令执行沙箱；上下文中引用这些命令也可能误触发。
 
-`sentinel.runtimeGuard` 与 `sentinel.canary` 是**默认关闭**的纵深防御：守卫只拦不可逆操作（凭证 / 系统路径写删、下载即执行），不拦普通临时文件；蜜罐只对“读了诱饵并把令牌发出去”的插件有效，命中是确证、未命中不代表清白。两者都需要在设置页或配置里显式打开，且都会在审计日志留下 `runtime-guard` / `runtime-canary` 记录。
+`sentinel.runtimeGuard` 与 `sentinel.canary` 都是三态决策项，默认 `allow`（关闭）：守卫只拦不可逆操作（凭证 / 系统路径写删、下载即执行），不拦普通临时文件；蜜罐只对“读了诱饵并把令牌发出去”的插件有效，命中是确证、未命中不代表清白。`ask` 只在能异步等待的路径上真正弹窗（`fs.promises`、`fetch`）；同步 `fs`、`child_process` 与 `http.request` 无法等待确认，按拒绝处理。两者都需要在设置页或配置里显式打开，且都会在审计日志留下 `runtime-guard` / `runtime-canary` 记录。
 
 ## 3. `deleteGuard`：删除保护
 
