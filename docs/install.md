@@ -60,15 +60,18 @@ DSH 会记录 Git 安装来源，并使用自己的插件管理流程处理后�
 3. 提交并创建与包版本匹配的 annotated tag；
 4. 推送 `main` 与 tag；
 5. CI 在 tag 上依次执行：标签与包版本校验、全量测试与覆盖率门槛、`npm pack`、创建 GitHub Release；
-6. `publish-npm` 作业随后执行 `npm publish --provenance`，把同一份内容发布到 npm。
+6. `publish-npm` 作业从 GitHub OIDC 取得发布身份，执行 `npm publish --access public`，把同一份内容发布到 npm。
 
-发布前需要在仓库 Secrets 中配置 npm granular access token（名称 `NPM_TOKEN`），作用域只限 `dsh-vigil` 并勾选 bypass 2FA：
+发布走 npm 的 trusted publishing，仓库里不保存任何发布密钥。需要两处配置：
 
-```powershell
-npm token create --name vigil-ci --packages dsh-vigil --packages-and-scopes-permission read-write --bypass-2fa
-```
+- **GitHub**：`publish-npm` 绑定 `npm` environment，发布前需要维护者批准；
+- **npm**：在包的 trusted publisher 中登记仓库 `DusklitSakura/dsh-vigil`、workflow `release.yml` 与 environment `npm`：
 
-否则 `publish-npm` 会带着提示失败，GitHub Release 不受影响。同一版本号发布后不能重发，只能 `npm deprecate` 或发布新版本。
+  ```powershell
+  npm trust github dsh-vigil --repo DusklitSakura/dsh-vigil --file release.yml --env npm --allow-publish
+  ```
+
+首次发布必须先手动完成，因为 npm 只允许为已存在的包配置 trusted publisher。三处的仓库、workflow 文件名与环境名必须完全一致，否则 OIDC 校验失败。同一版本号发布后不能重发，只能 `npm deprecate` 或发布新版本。
 
 当前发布版本为 `v0.0.1`；后续版本请以仓库 Release 页面、npm 版本列表与 `package.json` 为准。
 
