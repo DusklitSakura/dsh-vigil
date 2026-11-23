@@ -256,13 +256,13 @@ export function createInterceptor(options) {
                 deadlineAt,
                 ast: config.scan?.ast,
               })
+              let waitTimer = null
               const report = await Promise.race([
                 scanPromise,
                 new Promise(resolve => {
-                  const timer = setTimeout(() => resolve(null), 2500)
-                  if (typeof timer.unref === 'function') timer.unref()
+                  waitTimer = setTimeout(() => resolve(null), 2500)
                 }),
-              ])
+              ]).finally(() => clearTimeout(waitTimer))
               if (!report) {
                 const timeoutPrompt = '本地插件静态审计超时（超过 1.5 秒），未能给出结论。是否仍要继续安装？'
                 findings.push({ ruleId: 'VG-AUDIT-02', kind: 'ask', reason: timeoutPrompt })

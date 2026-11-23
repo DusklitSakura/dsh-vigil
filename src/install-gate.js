@@ -123,7 +123,9 @@ export function localSpecDir(spec, baseDir) {
   // package, not a directory.
   if (raw.startsWith('@')) return null
   if (raw.startsWith('~')) return raw
-  if (isAbsolute(raw)) return raw
+  // Windows drive / UNC paths must be recognised on any host: the gate parses
+  // specs that were produced elsewhere (tests, CI, profiles synced between OSes).
+  if (isAbsolute(raw) || /^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw)) return raw
   // A relative spec only means a directory when it is written like one.
   if (!/[\\/]/.test(raw) && !raw.startsWith('.')) return null
   if (!baseDir) return null
@@ -177,11 +179,11 @@ export function createInstallGate(options = {}) {
     if (identity && typeof options.advisories === 'function') {
       try {
         const lookup = Promise.resolve(options.advisories({ name: identity.name, version: identity.version }))
+        let budgetTimer = null
         const budget = new Promise(resolve => {
-          const timer = setTimeout(() => resolve({ ok: false, reason: 'timeout', advisories: [] }), Math.max(300, budgetMs))
-          if (typeof timer.unref === 'function') timer.unref()
+          budgetTimer = setTimeout(() => resolve({ ok: false, reason: 'timeout', advisories: [] }), Math.max(300, budgetMs))
         })
-        const result = await Promise.race([lookup, budget])
+        const result = await Promise.race([lookup, budget]).finally(() => clearTimeout(budgetTimer))
         if (result?.ok === true && Array.isArray(result.advisories) && result.advisories.length > 0) {
           advisorySnapshot = result.advisories
         } else if (result?.ok === false) {
@@ -222,13 +224,13 @@ export function createInstallGate(options = {}) {
         advisories: advisorySnapshot,
         trust,
       })
+      let waitTimer = null
       report = await Promise.race([
         scanPromise,
         new Promise(resolveRace => {
-          const timer = setTimeout(() => resolveRace(null), waitMs)
-          if (typeof timer.unref === 'function') timer.unref()
+          waitTimer = setTimeout(() => resolveRace(null), waitMs)
         }),
-      ])
+      ]).finally(() => clearTimeout(waitTimer))
     } catch (error) {
       // A broken scanner must not silently become "safe": ask, and say why.
       const reason = `安装前静态审计失败：${error instanceof Error ? error.message : String(error)}`
