@@ -58,6 +58,8 @@ cd <仓库目录>
 npm install --omit=dev
 ```
 
+漏掉这一步的典型现象：插件本身能加载（`vigil_status` 有输出），但设置页提示「没有找到 dsh-vigil 的配置项」——因为 `@deepseek-ai/schemastery` 解析失败，Host 拿不到 Config schema。此时重载插件前先补装依赖即可。
+
 普通 GitHub / npm 安装用户不需要运行以上命令。
 
 ## 3. GitHub 安装与更新
