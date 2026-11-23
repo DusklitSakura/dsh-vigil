@@ -59,10 +59,12 @@ DSH 会记录 Git 安装来源，并使用自己的插件管理流程处理后�
 2. 更新 `CHANGELOG.md`；
 3. 提交并创建与包版本匹配的 annotated tag；
 4. 推送 `main` 与 tag；
-5. 在 GitHub 创建 Release，并核对发布包与 SHA-256；
-6. 通过 CI 的 tag / package version 校验。
+5. CI 在 tag 上依次执行：标签与包版本校验、全量测试与覆盖率门槛、`npm pack`、创建 GitHub Release；
+6. `publish-npm` 作业随后执行 `npm publish --provenance`，把同一份内容发布到 npm。
 
-当前发布版本为 `v0.0.1`；后续版本请以仓库 Release 页面与 `package.json` 为准。
+发布前需要在仓库 Secrets 中配置 npm automation token（名称 `NPM_TOKEN`），否则 `publish-npm` 会带着提示失败，GitHub Release 不受影响。同一版本号发布后不能重发，只能 `npm deprecate` 或发布新版本。
+
+当前发布版本为 `v0.0.1`；后续版本请以仓库 Release 页面、npm 版本列表与 `package.json` 为准。
 
 ### 3.3 用户更新
 
