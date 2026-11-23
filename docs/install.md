@@ -62,7 +62,13 @@ DSH 会记录 Git 安装来源，并使用自己的插件管理流程处理后�
 5. CI 在 tag 上依次执行：标签与包版本校验、全量测试与覆盖率门槛、`npm pack`、创建 GitHub Release；
 6. `publish-npm` 作业随后执行 `npm publish --provenance`，把同一份内容发布到 npm。
 
-发布前需要在仓库 Secrets 中配置 npm automation token（名称 `NPM_TOKEN`），否则 `publish-npm` 会带着提示失败，GitHub Release 不受影响。同一版本号发布后不能重发，只能 `npm deprecate` 或发布新版本。
+发布前需要在仓库 Secrets 中配置 npm granular access token（名称 `NPM_TOKEN`），作用域只限 `dsh-vigil` 并勾选 bypass 2FA：
+
+```powershell
+npm token create --name vigil-ci --packages dsh-vigil --packages-and-scopes-permission read-write --bypass-2fa
+```
+
+否则 `publish-npm` 会带着提示失败，GitHub Release 不受影响。同一版本号发布后不能重发，只能 `npm deprecate` 或发布新版本。
 
 当前发布版本为 `v0.0.1`；后续版本请以仓库 Release 页面、npm 版本列表与 `package.json` 为准。
 
